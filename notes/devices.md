@@ -73,7 +73,7 @@ int nk_sound_dev_deinit();
 ```
 
 ```c
-struct nk_sound_dev * nk_block_dev_register{ ... };
+struct nk_sound_dev * nk_block_dev_register( ... );
 ```
 
 ```c
@@ -81,7 +81,7 @@ int nk_sound_dev_unregister( ... );
 ```
 
 ```c
-struct nk_sound_dev * nk_sound_dev_find{ ... };
+struct nk_sound_dev * nk_sound_dev_find( ... );
 ```
 
 ```c
