@@ -1,0 +1,9 @@
+*.o
+*.cmd
+tags
+.config*
+*.bin
+*.iso
+*.syms
+*.bc
+*.ll
