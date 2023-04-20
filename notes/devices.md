@@ -2,6 +2,8 @@
 
 ## Initialization
 
+The snippets in this subsection show how specific device drivers and device abstraction layers are currently being initialized and registered.
+
 1. The entry point is in `void init(...)` inside `src/arch/x64/init.c`
 
 ```c
