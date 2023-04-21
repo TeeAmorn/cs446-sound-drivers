@@ -46,52 +46,101 @@ init (unsigned long mbd,
 ## Sound Abstraction Layers
 
 ```c
+// what is the purpose of this?
 typedef enum {
-    NK_SOUND_DEV_STATUS_SUCCESS=0,
+  NK_SOUND_DEV_STATUS_SUCCESS = 0,
     NK_SOUND_DEV_STATUS_ERROR
-} nk_sound_dev_status_t;
+}
+nk_sound_dev_status_t
 ```
 
 ```c
-struct nk_sound_dev_characteristics { ... };
+struct nk_sound_dev_characteristics {
+    // currently none - discuss with Dinda
+}
 ```
 
 ```c
-struct nk_sound_dev_int { ... };
+struct nk_sound_dev_int {
+  // this must be first so it derives cleanly
+  // from nk_dev int
+  struct nk_dev_int dev_int;
+
+  // sounddev-specific interface - set to zero if not available
+  // an interface either succeeds (returns zero) or fails (returns -1)
+  // in any case, it returns immediately
+  int( * get_characteristics)(void * state, struct nk_sound_dev_characteristics * c);
+  int( * read)(void * state, uint8_t * dest, ...);
+  int( * write)(void * state, uint8_t * src, ...);
+}
 ```
 
 ```c
-struct nk_sound_dev { ... };
+struct nk_sound_dev {
+  // must be first member
+  struct nk_dev dev;
+}
 ```
 
 ```c
-int nk_sound_dev_init();
+int nk_sound_dev_init() {
+  INFO("init\n");
+  return 0;
+}
 ```
 
 ```c
-int nk_sound_dev_deinit();
+int nk_sound_dev_deinit() {
+  INFO("deinit\n");
+  return 0;
+}
 ```
 
 ```c
-struct nk_sound_dev * nk_sound_dev_register( ... );
+struct nk_sound_dev * nk_sound_dev_register(char * name, uint64_t flags, struct nk_sound_dev_int * inter, void * state) {
+  INFO("register device %s\n", name);
+  // have to define NK_DEV_SOUND IN include/nautilus/dev.h
+  return (struct nk_sound_dev * ) nk_dev_register(name, NK_DEV_SOUND, flags, (struct nk_dev_int * ) inter, state);
+}
 ```
 
 ```c
-int nk_sound_dev_unregister( ... );
+int nk_sound_dev_unregister(struct nk_sound_dev * d) {
+  INFO("unregister device %s\n", d -> dev.name);
+  return nk_dev_unregister((struct nk_dev * ) d);
+}
 ```
 
 ```c
-struct nk_sound_dev * nk_sound_dev_find( ... );
+struct nk_sound_dev * nk_sound_dev_find(char * name) {
+  DEBUG("find %s\n", name);
+  struct nk_dev * d = nk_dev_find(name);
+  if (d -> type != NK_DEV_SOUND) {
+    DEBUG("%s not found\n", name);
+    return 0;
+  } else {
+    DEBUG("%s found\n", name);
+    return (struct nk_sound_dev * ) d;
+  }
+}
 ```
 
 ```c
-int nk_sound_dev_get_characteristics( ... );
+int nk_sound_dev_get_characteristics(struct nk_sound_dev * dev, struct nk_sound_dev_characteristics * c) {
+  struct nk_dev * d = (struct nk_dev * )( & (dev -> dev));
+  struct nk_sound_dev_int * di = (struct nk_sound_dev_int * )(d -> interface);
+
+  DEBUG("get characteristics of %s\n", d -> name);
+  return di -> get_characteristics(d -> state, c);
+}
 ```
 
 ```c
+// TODO!
 int nk_sound_dev_read( ... );
 ```
 
 ```c
+// TODO!
 int nk_sound_dev_write( ... );
 ```
