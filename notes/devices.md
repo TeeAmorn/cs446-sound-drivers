@@ -136,11 +136,41 @@ int nk_sound_dev_get_characteristics(struct nk_sound_dev * dev, struct nk_sound_
 ```
 
 ```c
-// TODO!
-int nk_sound_dev_read( ... );
+typedef enum {
+    NK_SOUND_DEV_SCALE_LINEAR,
+    NK_SOUND_DEV_SCALE_LOGARITHMIC,
+}
+nk_sound_dev_scale_t
+```
+
+```c
+struct nk_sound_dev_params {
+    uint64_t sample_rate;
+    uint8_t resolution;
+    uint8_t num_of_channels;
+    nk_sound_dev_scale_t scale;
+}
+```
+
+```c
+int nk_sound_dev_set_params(struct nk_sound_dev * d, struct nk_sound_dev_params * p) {
+    // TODO
+}
+```
+
+```c
+int nk_sound_dev_write(
+    uint64_t count, 
+    void *src, nk_dev_request_type_t type,
+    void (*callback)(nk_sound_dev_status_t status,
+    void *state),
+    void *state
+) {
+    // TODO
+}
 ```
 
 ```c
 // TODO!
-int nk_sound_dev_write( ... );
+int nk_sound_dev_read( ... );
 ```
