@@ -187,6 +187,7 @@ int nk_sound_dev_write(
           DEBUG("write_sound is not possible\n");
           return -1;
         } else {
+          // TODO: Add struct op
           volatile struct op o;
           o.completed = 0;
           o.status = 0;
@@ -200,12 +201,14 @@ int nk_sound_dev_write(
               return 0;
             }
           } else {
+            // TODO: Add `generic_read_callback`
             if (di->write_sound(d->state, count, src, generic_read_callback, (void *)&o)) {
               ERROR("failed to start up write_sound\n");
               return -1;
             } else {
               DEBUG("write_sound started, waiting for completion\n");
               while (!o.completed) {
+                 // TODO: Add `generic_cond_callback`
                 nk_dev_wait((struct nk_dev *)d, generic_cond_check, (void *)&o);
               }
               return 0;
