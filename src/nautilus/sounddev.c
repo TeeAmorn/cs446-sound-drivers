@@ -58,7 +58,7 @@ int nk_sound_dev_deinit()
 struct nk_sound_dev *nk_sound_dev_register(char *name, uint64_t flags, struct nk_sound_dev_int *inter, void *state)
 {
     INFO("register device %s\n", name);
-    return (struct nk_sound_dev *)nk_dev_register(name, NK_DEV_SOUND, flags, (struct nk_sound_int *)inter, state);
+    return (struct nk_sound_dev *)nk_dev_register(name, NK_DEV_SOUND, flags, (struct nk_dev_int *)inter, state);
 }
 
 int nk_sound_dev_unregister(struct nk_sound_dev *d)
