@@ -70,8 +70,8 @@ struct nk_sound_dev_int {
   // an interface either succeeds (returns zero) or fails (returns -1)
   // in any case, it returns immediately
   int( * get_characteristics)(void * state, struct nk_sound_dev_characteristics * c);
-  int( * read)(void * state, uint64_t count, uint8_t * dest, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
-  int( * write)(void * state, uint64_t count, uint8_t * src, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
+  int( * read_sound)(void * state, uint64_t count, uint8_t * dest, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
+  int( * write_sound)(void * state, uint64_t count, uint8_t * src, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
   int( * set_params)(void * state, struct nk_sound_dev_params * p);
 }
 ```
@@ -163,13 +163,59 @@ int nk_sound_dev_set_params(struct nk_sound_dev * dev, struct nk_sound_dev_param
 
 ```c
 int nk_sound_dev_write(
-    uint64_t count, 
+    uint64_t count,
     void *src, nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status,
     void *state),
     void *state
 ) {
-    // TODO
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    DEBUG("write %s, count=%lu, type=%lx\n", d->name, count, type);
+    switch (type) {
+      case NK_DEV_REQ_CALLBACK:
+        if (!di->write_sound) {
+          DEBUG("write_sound not possible\n");
+          return -1;
+        } else {
+          return di->write_sound(d->state, count, src, callback, state);
+        }
+        break;
+      case NK_DEV_REQ_BLOCKING:
+      case NK_DEV_REQ_NONBLOCKING: {
+        if (!di->write_sound) {
+          DEBUG("write_sound is not possible\n");
+          return -1;
+        } else {
+          volatile struct op o;
+          o.completed = 0;
+          o.status = 0;
+          o.dev = dev;
+          if (type == NK_DEV_REQ_NONBLOCKING) {
+            if (di->write_sound(d->state, count, src, 0, 0)) {
+              ERROR("failed to start up write_sound\n");
+              return -1;
+            } else {
+              DEBUG("read_sound started\n");
+              return 0;
+            }
+          } else {
+            if (di->write_sound(d->state, count, src, generic_read_callback, (void *)&o)) {
+              ERROR("failed to start up write_sound\n");
+              return -1;
+            } else {
+              DEBUG("write_sound started, waiting for completion\n");
+              while (!o.completed) {
+                nk_dev_wait((struct nk_dev *)d, generic_cond_check, (void *)&o);
+              }
+              return 0;
+            }
+          }
+        }
+      } break;
+      default:
+        return -1;
+    }
 }
 ```
 
