@@ -70,8 +70,9 @@ struct nk_sound_dev_int {
   // an interface either succeeds (returns zero) or fails (returns -1)
   // in any case, it returns immediately
   int( * get_characteristics)(void * state, struct nk_sound_dev_characteristics * c);
-  int( * read)(void * state, uint8_t * dest, ...);
-  int( * write)(void * state, uint8_t * src, ...);
+  int( * read)(void * state, uint64_t count, uint8_t * dest, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
+  int( * write)(void * state, uint64_t count, uint8_t * src, void (* callback)(nk_sound_dev_status_t status, void * context), void * context);
+  int( * set_params)(void * state, struct nk_sound_dev_params * p);
 }
 ```
 
@@ -153,8 +154,10 @@ struct nk_sound_dev_params {
 ```
 
 ```c
-int nk_sound_dev_set_params(struct nk_sound_dev * d, struct nk_sound_dev_params * p) {
-    // TODO
+int nk_sound_dev_set_params(struct nk_sound_dev * dev, struct nk_sound_dev_params * p) {
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    di->set_params(d->state, p);
 }
 ```
 
