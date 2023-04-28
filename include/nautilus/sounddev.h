@@ -46,6 +46,14 @@ typedef enum
     NK_SOUND_DEV_STATUS_ERROR
 } nk_sound_dev_status_t;
 
+struct nk_sound_dev_params
+{
+    uint32_t sample_rate;
+    uint8_t sample_resolution;
+    uint8_t num_of_channels;
+    nk_sound_dev_scale_t scale;
+};
+
 struct nk_sound_dev_int
 {
     // this must be first so it derives cleanly
@@ -59,6 +67,7 @@ struct nk_sound_dev_int
     // callback can be null
     int (*write_sound)(void *state, uint8_t *src, uint64_t len, void (*callback)(nk_sound_dev_status_t status, void *context), void *context);
     int (*read_sound)(void *state, uint8_t *dst, uint64_t len, void (*callback)(nk_sound_dev_status_t status, void *context), void *context);
+    int (*set_params)(void *state, struct nk_sound_dev_params *p);
 };
 
 struct nk_sound_dev
@@ -92,5 +101,7 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
                       void (*callback)(nk_sound_dev_status_t status,
                                        void *state), // for callback reqs
                       void *state);                  // for callback reqs
+
+int nk_sound_dev_set_params(struct nk_sound_dev *dev, struct nk_sound_dev_params *p);
 
 #endif

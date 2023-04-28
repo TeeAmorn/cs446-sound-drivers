@@ -275,3 +275,12 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
         return -1;
     }
 }
+
+int nk_sound_dev_set_params(struct nk_sound_dev *dev, struct nk_sound_dev_params *p)
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+
+    DEBUG("set sound parameters of %s\n", d->name);
+    return di->set_params(d->state, p);
+}
