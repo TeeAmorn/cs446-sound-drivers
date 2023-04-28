@@ -83,13 +83,46 @@ struct nk_sound_dev *nk_sound_dev_find(char *name)
     }
 }
 
-int nk_sound_dev_get_characteristics(struct nk_sound_dev *dev, struct nk_sound_dev_characteristics *c)
+int nk_sound_dev_get_available_sample_rates(struct nk_sound_dev *dev, uint32_t rates[])
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_sample_rates(d->state, rates);
+}
 
-    DEBUG("get characteristics of %s\n", d->name);
-    return di->get_characteristics(d->state, c);
+int nk_sound_dev_get_available_sample_resolution(struct nk_sound_dev *dev, uint8_t resolutions[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_sample_resolution(d->state, resolutions);
+}
+
+int nk_sound_dev_get_available_num_of_channels(struct nk_sound_dev *dev, uint8_t channels[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_num_of_channels(d->state, channels);
+}
+
+int nk_sound_dev_get_available_scale(struct nk_sound_dev *dev, uint32_t scales[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_scale(d->state, scales);
+}
+
+struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, struct nk_sound_dev_params *params)
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->open_stream(d->state, params);
+}
+
+int nk_sound_dev_close_stream(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream)
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->close_stream(d->state, stream);
 }
 
 struct op
@@ -123,12 +156,13 @@ static int generic_cond_check(void *state)
     return o->completed;
 }
 
-int nk_sound_dev_write(struct nk_sound_dev *dev,
-                       uint8_t *src,
-                       uint64_t len,
-                       nk_dev_request_type_t type,
-                       void (*callback)(nk_sound_dev_status_t status, void *state),
-                       void *state)
+int nk_sound_dev_write_to_stream(struct nk_sound_dev *dev,
+                                 struct nk_sound_dev_stream *stream,
+                                 uint8_t *src,
+                                 uint64_t len,
+                                 nk_dev_request_type_t type,
+                                 void (*callback)(nk_sound_dev_status_t status, void *state),
+                                 void *state)
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
@@ -136,19 +170,19 @@ int nk_sound_dev_write(struct nk_sound_dev *dev,
     switch (type)
     {
     case NK_DEV_REQ_CALLBACK:
-        if (!di->write_sound)
+        if (!di->write_to_stream)
         {
             DEBUG("write sound not possible\n");
             return -1;
         }
         else
         {
-            return di->write_sound(d->state, src, len, callback, state);
+            return di->write_to_stream(d->state, stream, src, len, callback, state);
         }
         break;
     case NK_DEV_REQ_BLOCKING:
     case NK_DEV_REQ_NONBLOCKING:
-        if (!di->write_sound)
+        if (!di->write_to_stream)
         {
             DEBUG("write sound not possible\n");
             return -1;
@@ -163,7 +197,7 @@ int nk_sound_dev_write(struct nk_sound_dev *dev,
 
             if (type == NK_DEV_REQ_NONBLOCKING)
             {
-                if (di->write_sound(d->state, src, len, 0, 0))
+                if (di->write_to_stream(d->state, stream, src, len, 0, 0))
                 {
                     ERROR("failed to write sound\n");
                     return -1;
@@ -176,7 +210,7 @@ int nk_sound_dev_write(struct nk_sound_dev *dev,
             }
             else
             {
-                if (di->write_sound(d->state, src, len, generic_write_callback, (void *)&o))
+                if (di->write_to_stream(d->state, stream, src, len, generic_write_callback, (void *)&o))
                 {
                     ERROR("failed to write sound\n");
                     return -1;
@@ -199,12 +233,13 @@ int nk_sound_dev_write(struct nk_sound_dev *dev,
     }
 }
 
-int nk_sound_dev_read(struct nk_sound_dev *dev,
-                      uint8_t *dest,
-                      uint64_t len,
-                      nk_dev_request_type_t type,
-                      void (*callback)(nk_sound_dev_status_t status, void *state),
-                      void *state)
+int nk_sound_dev_read_to_stream(struct nk_sound_dev *dev,
+                                struct nk_sound_dev_stream *stream,
+                                uint8_t *dst,
+                                uint64_t len,
+                                nk_dev_request_type_t type,
+                                void (*callback)(nk_sound_dev_status_t status, void *state),
+                                void *state)
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
@@ -213,19 +248,19 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
     switch (type)
     {
     case NK_DEV_REQ_CALLBACK:
-        if (!di->read_sound)
+        if (!di->read_from_stream)
         {
             DEBUG("read sound not possible\n");
             return -1;
         }
         else
         {
-            return di->read_sound(d->state, dest, len, callback, state);
+            return di->read_from_stream(d->state, stream, dst, len, callback, state);
         }
         break;
     case NK_DEV_REQ_BLOCKING:
     case NK_DEV_REQ_NONBLOCKING:
-        if (!di->read_sound)
+        if (!di->read_from_stream)
         {
             DEBUG("read sound not possible\n");
             return -1;
@@ -240,7 +275,7 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
 
             if (type == NK_DEV_REQ_NONBLOCKING)
             {
-                if (di->read_sound(d->state, dest, len, 0, 0))
+                if (di->read_from_stream(d->state, stream, dst, len, 0, 0))
                 {
                     ERROR("failed to read sound\n");
                     return -1;
@@ -253,7 +288,7 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
             }
             else
             {
-                if (di->read_sound(d->state, dest, len, generic_read_callback, (void *)&o))
+                if (di->read_from_stream(d->state, stream, dst, len, generic_read_callback, (void *)&o))
                 {
                     ERROR("failed to read sound\n");
                     return -1;
@@ -276,11 +311,11 @@ int nk_sound_dev_read(struct nk_sound_dev *dev,
     }
 }
 
-int nk_sound_dev_set_params(struct nk_sound_dev *dev, struct nk_sound_dev_params *p)
+int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, struct nk_sound_dev_params *p)
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
 
     DEBUG("set sound parameters of %s\n", d->name);
-    return di->set_params(d->state, p);
+    return di->get_stream_params(d->state, stream, p);
 }
