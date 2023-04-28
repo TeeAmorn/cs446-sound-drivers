@@ -1196,6 +1196,12 @@ config DEBUG_GROUP
       default n
       help
         Turn on debug output for GPU (graphics) device interface
+    config DEBUG_SOUNDDEV
+      bool "Debug Sound Device Interface"
+      depends on DEBUG_DEV
+      default n
+      help
+        Turn on debug output for sound device interface
     config DEBUG_PARTITION
       bool "Debug Partitioning"
       depends on PARTITION_SUPPORT && DEBUG_DEV
