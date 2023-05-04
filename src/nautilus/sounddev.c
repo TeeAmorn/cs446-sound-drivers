@@ -83,39 +83,17 @@ struct nk_sound_dev *nk_sound_dev_find(char *name)
     }
 }
 
-int nk_sound_dev_get_available_sample_rates(struct nk_sound_dev *dev, uint32_t rates[])
-{
+int nk_sound_dev_get_avaiable_modes(struct nk_sound_dev *dev, struct nk_sound_dev_params params[]) {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->get_available_sample_rates(d->state, rates);
+    return di->get_avaiable_modes(d->state, params); 
 }
 
-int nk_sound_dev_get_available_sample_resolution(struct nk_sound_dev *dev, uint8_t resolutions[])
+struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, nk_sound_dev_stream_t stream_type, struct nk_sound_dev_params *params)
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->get_available_sample_resolution(d->state, resolutions);
-}
-
-int nk_sound_dev_get_available_num_of_channels(struct nk_sound_dev *dev, uint8_t channels[])
-{
-    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
-    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->get_available_num_of_channels(d->state, channels);
-}
-
-int nk_sound_dev_get_available_scale(struct nk_sound_dev *dev, uint32_t scales[])
-{
-    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
-    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->get_available_scale(d->state, scales);
-}
-
-struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, struct nk_sound_dev_params *params)
-{
-    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
-    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->open_stream(d->state, params);
+    return di->open_stream(d->state, stream_type, params);
 }
 
 int nk_sound_dev_close_stream(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream)
