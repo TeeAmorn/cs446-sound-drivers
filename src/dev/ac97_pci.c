@@ -165,6 +165,40 @@
 #define AC97_REG_BOX_NEXT 0x0A       // number of buffer entry to be processed next
 #define AC97_REG_BOX_CTRL 0x0B       // transfer control
 
+/* Now that I think about it, I think the box might need to be represented with a struct/bitfield instead of macros */
+struct ac97_nabm_box_rx_desc
+{
+    uint32_t* addr;
+    uint8_t ape;
+    uint8_t total;
+    uint16_t status;
+    uint16_t trans_samples;
+    uint8_t npe; 
+    uint8_t ctrl; 
+}
+
+struct ac97_nabm_rx_desc
+{
+    struct ac97_nabm_box_rx_desc input;
+    struct ac97_nabm_box_rx_desc output;
+    struct ac97_nabm_box_rx_desc mic;
+    struct 
+    {
+        uint8_t gie         : 1;
+        uint8_t cr          : 1;
+        uint8_t wr          : 1;
+        uint8_t sd          : 1;
+        uint16_t rsvd       : 16; 
+        uint8_t chnl        : 2; 
+        uint8_t out_mode    : 2;
+    } global_ctrl;
+    struct 
+    {
+        uint32_t rsvd       : 20;
+        uint8_t chnl        : 2;
+        uint8_t smpl        : 2;
+    } global_status;
+} __attribute__((packed));
 
 // TODO: Keep editing the file from here, using e1000e_pci.c as a reference. 
 // I think the next step might be to provide offsets to the individual bits of each register? 
