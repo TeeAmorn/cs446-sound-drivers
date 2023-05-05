@@ -61,6 +61,7 @@ struct nk_sound_dev_params
 struct nk_sound_dev_stream
 {
     uint8_t stream_id;
+    nk_sound_dev_stream_t type;
     struct nk_sound_dev_params params;
 };
 
