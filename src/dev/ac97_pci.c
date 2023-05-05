@@ -68,12 +68,12 @@
 #define RXD_LENGTH(i) (((struct e1000e_rx_desc *)RXD_RING_BUFFER)[(i)].length)
 #define RXD_ADDR(i) (((struct e1000e_rx_desc *)RXD_RING_BUFFER)[(i)].addr)
 */
-#define BDL_DESC(i) (((struct ac97_bdl_desc *)BDL_RING_BUFFER)[(i)])
-#define BDL_ADDR(i) (((struct ac97_bdl_desc *)BDL_RING_BUFFER)[(i)].addr)
-#define BDL_SAMPLES(i) (((struct ac97_bdl_desc *)BDL_RING_BUFFER)[(i)].samples)
+#define BDL_ENTRY_DESC(i) (((struct ac97_bdl_entry_desc *)BDL_RING_BUFFER)[(i)])
+#define BDL_ENTRY_ADDR(i) (((struct ac97_bdl_entry_desc *)BDL_RING_BUFFER)[(i)].addr)
+#define BDL_ENTRY_SAMPLES(i) (((struct ac97_bdl_entry_desc *)BDL_RING_BUFFER)[(i)].samples)
 // These next two items might need better names
-#define BDL_LAST_ENTRY_BIT(i) (((struct ac97_bdl_desc *)BDL_RING_BUFFER)[(i)].last_entry_bit) // notes last sample entry placed in buffer
-#define BDL_IOC_BIT(i) (((struct ac97_bdl_desc *)BDL_RING_BUFFER)[(i)].ioc_bit)               // if set, fires interrupt when all samples are consumed
+#define BDL_LAST_ENTRY_BIT(i) (((struct ac97_bdl_entry_desc *)BDL_RING_BUFFER)[(i)].last_entry_bit) // notes last sample entry placed in buffer
+#define BDL_IOC_BIT(i) (((struct ac97_bdl_entry_desc *)BDL_RING_BUFFER)[(i)].ioc_bit)               // if set, fires interrupt when all samples are consumed
 
 #define BDL_COUNT (BDL_RING->count) // typically 32 entries for AC97
 #define BDL_INC(a, b) (((a) + (b)) % BDL_RING->count) // modular increment bdl index
@@ -166,44 +166,84 @@
 #define AC97_REG_BOX_CTRL 0x0B       // transfer control
 
 /* Now that I think about it, I think the box might need to be represented with a struct/bitfield instead of macros */
-struct ac97_nabm_box_rx_desc
+struct ac97_nabm_box_desc     // describes a native audio bus register box
 {
-    uint32_t* addr;
-    uint8_t ape;
-    uint8_t total;
-    uint16_t status;
-    uint16_t trans_samples;
-    uint8_t npe; 
-    uint8_t ctrl; 
+    // Should this be made into bitfields for each component, or is that overkill?
+    uint32_t* addr;           // physical address of buffer descriptor list
+    uint8_t ape;              // number of actual processed buffer descriptor entry
+    uint8_t total;            // total number of entries in the buffer descriptor list
+    uint16_t status;          // status of transferring data
+    uint16_t trans_samples;   // number of transferred samples in ape
+    uint8_t npe;              // number of next processed buffer entry
+    uint8_t ctrl;             // transfer control 
 }
 
-struct ac97_nabm_rx_desc
+struct ac97_nabm_desc                  // describes native audio bus registers 
 {
-    struct ac97_nabm_box_rx_desc input;
-    struct ac97_nabm_box_rx_desc output;
-    struct ac97_nabm_box_rx_desc mic;
+    struct ac97_nabm_box_desc input;   // nabm register box for pcm input
+    struct ac97_nabm_box_desc output;  // nabm register box for pcm output
+    struct ac97_nabm_box_desc mic;     // nabm register box for microphone
     struct 
     {
-        uint8_t gie         : 1;
-        uint8_t cr          : 1;
-        uint8_t wr          : 1;
-        uint8_t sd          : 1;
-        uint16_t rsvd       : 16; 
-        uint8_t chnl        : 2; 
-        uint8_t out_mode    : 2;
-    } global_ctrl;
+        uint8_t gie         : 1;       // global interrupt enable
+        uint8_t cr          : 1;       // cold reset
+        uint8_t wr          : 1;       // warm reset
+        uint8_t sd          : 1;       // shut down
+        uint16_t rsvd       : 16;      // reserved
+        uint8_t chnl        : 2;       // channels for pcm output 
+        uint8_t out_mode    : 2;       // pcm output mode 
+    } global_ctrl;                     // describes global control register
     struct 
     {
-        uint32_t rsvd       : 20;
-        uint8_t chnl        : 2;
-        uint8_t smpl        : 2;
-    } global_status;
+        uint32_t rsvd       : 20;      // reserved
+        uint8_t chnl        : 2;       // channel capabilities
+        uint8_t smpl        : 2;       // sample capabilities
+    } global_status;                   // describes global status register
 } __attribute__((packed));
 
-// TODO: Keep editing the file from here, using e1000e_pci.c as a reference. 
-// I think the next step might be to provide offsets to the individual bits of each register? 
-// It seems like e1000e_pci.c does this along with some pre-set bit masks for useful functionalities on 
-// the device, but it has been hard to verify this since I can't find a nice OSDEV page like the AC97 has.
+struct ac97_bdl_entry_desc     // describes an ac97 bdl entry 
+{
+    uint32_t* addr;            // physical address to sound data in memory
+    uint16_t total;            // number of samples in this buffer
+    struct 
+    {
+        uint16_t rsvd : 14;    // reserved
+        uint8_t last  : 1;     // last entry of buffer, stop playing
+        uint8_t ioc   : 1;     // interrupt fired when data from this entry is transferred
+    } bit; // Is the bitfield necessary since this isn't representing a register? The OSDev page makes it seem like this should have a 
+} __attribute__((packed));
+
+struct ac97_state 
+{
+    // a pointer to the base class
+    struct nk_sound_dev *sounddev;
+
+    // pci interrupt vector
+    struct pci_dev *pci_dev;
+
+    // our device list
+    struct list_head node;
+
+    // Where registers are mapped into the I/O address space
+    uint16_t ioport_start;
+    uint16_t ioport_end;
+
+    // Where registers are mapped into the physical memory address space
+    uint64_t mem_start;
+    uint64_t mem_end;
+
+    char name[DEV_NAME_LEN];
+
+    // Circrular queue containing BDL entries for the AC97 to play from
+    struct ac97_desc_ring *bdl;
+
+    // TODO: What else do we need to add? 
+};
+
+// TODO: Keep editing the file from here, using e1000e_pci.c as a reference.
+// The e1000e_pci.c file uses some bitmasks that might be useful to try to implement later
+// Regardless we need to change below to an ac97_desc_ring. 
+// I'm not sure how to use the ring buffer to store ac97_bdl_entry_desc objects yet
 
 struct e1000e_desc_ring
 {
