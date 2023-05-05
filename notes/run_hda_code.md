@@ -2,7 +2,9 @@
 
 The following instructions were tested on Macbooks (intel and M1 ships) and a virtual machine (Ubantu 16.04). While the HDA code works find on a Linux virtual machine, it cannot play sound on Macbooks. Professor Dinda suspects that the HDA code seeems to only support specific qemu versions. Please see this [Piazza](https://piazza.com/class/lfmvv2o1psc5fp/post/64) post for more detail.
 
-1. CD into Nautilus folder that has the HDA code
+## Instructions
+
+1. `cd` into Nautilus folder that has the HDA code
 
 2. Copy Professor Dinda's default config -- this will ensure we turn on the debug mode
 
