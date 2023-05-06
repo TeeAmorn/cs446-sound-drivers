@@ -31,7 +31,7 @@
 #include <dev/pci.h>
 #include <nautilus/mm.h> // malloc, free
 #include <dev/ac97_pci.h>
-#include <dev/e100e_pci.h> // TODO: included so I can compile the file need to remove at a later date
+#include <dev/e1000e_pci.h> // TODO: included so I can compile the file need to remove at a later date
 #include <nautilus/irq.h>         // interrupt register
 #include <nautilus/naut_string.h> // memset, memcpy
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
@@ -177,7 +177,7 @@ struct ac97_nabm_box_desc     // describes a native audio bus register box
     uint16_t trans_samples;   // number of transferred samples in ape
     uint8_t npe;              // number of next processed buffer entry
     uint8_t ctrl;             // transfer control 
-}
+};
 
 struct ac97_nabm_desc                  // describes native audio bus registers 
 {
@@ -408,7 +408,7 @@ struct ac97_desc_ring
 // };
 
 // // list of discovered devices
-// static struct list_head dev_list;
+static struct list_head dev_list;
 
 // // initialize the tx ring buffer to store transmit descriptors
 // static int e1000e_init_transmit_ring(struct e1000e_state *state)
@@ -1149,79 +1149,82 @@ int ac97_pci_init(struct naut_info *naut)
                 // find out the bar for AC97
                 //TODO: edit from here
                 // 6 -> # of BARs
-                // for (int i = 0; i < 6; i++)
-                // {
-                //     uint32_t bar = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
-                //     uint32_t size;
-                //     DEBUG("bar %d: 0x%0x\n", i, bar);
-                //     // go through until the last one, and get out of the loop
-                //     if (bar == 0)
-                //     {
-                //         break;
-                //     }
-                //     // get the last bit and if it is zero, it is the memory
-                //     // " -------------------------"  one, it is the io
-                //     if (!(bar & 0x1))
-                //     {
-                //         uint8_t mem_bar_type = (bar & 0x6) >> 1;
-                //         if (mem_bar_type != 0)
-                //         { // 64 bit address that we do not handle it
-                //             ERROR("Cannot handle memory bar type 0x%x\n", mem_bar_type);
-                //             return -1;
-                //         }
-                //     }
+                
+		 for (int i = 0; i < 6; i++)
+                {
+                    uint32_t bar = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
+                    uint32_t size;
+                    DEBUG("bar %d: 0x%0x\n", i, bar);
+                    // go through until the last one, and get out of the loop
+                    if (bar == 0)
+                    {
+                        break;
+                    }
+                    // get the last bit and if it is zero, it is the memory
+                    // " -------------------------"  one, it is the io
+                    if (!(bar & 0x1))
+                    {
+                        uint8_t mem_bar_type = (bar & 0x6) >> 1;
+                        if (mem_bar_type != 0)
+                        { // 64 bit address that we do not handle it
+                            ERROR("Cannot handle memory bar type 0x%x\n", mem_bar_type);
+                            return -1;
+                        }
+                    }
 
-                //     // determine size
-                //     // write all 1s, get back the size mask
-                //     pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, 0xffffffff);
-                //     // size mask comes back + info bits
-                //     // write all ones and read back. if we get 00 (negative size), size = 4.
-                //     size = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
+                    // determine size
+                    // write all 1s, get back the size mask
+                    pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, 0xffffffff);
+                    // size mask comes back + info bits
+                    // write all ones and read back. if we get 00 (negative size), size = 4.
+                    size = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
 
-                //     // mask all but size mask
-                //     if (bar & 0x1)
-                //     { // I/O
-                //         size &= 0xfffffffc;
-                //     }
-                //     else
-                //     { // memory
-                //         size &= 0xfffffff0;
-                //     }
-                //     // two complement, get back the positive size
-                //     size = ~size;
-                //     size++;
+                    // mask all but size mask
+                    if (bar & 0x1)
+                    { // I/O
+                        size &= 0xfffffffc;
+                    }
+                    else
+                    { // memory
+                        size &= 0xfffffff0;
+                    }
+                    // two complement, get back the positive size
+                    size = ~size;
+                    size++;
 
-                //     // now we have to put back the original bar
-                //     pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, bar);
+                    // now we have to put back the original bar
+                    pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, bar);
 
-                //     if (!size)
-                //     { // size = 0 -> non-existent bar, skip to next one
-                //         continue;
-                //     }
+                    if (!size)
+                    { // size = 0 -> non-existent bar, skip to next one
+                        continue;
+                    }
 
-                //     uint32_t start = 0;
-                //     if (bar & 0x1)
-                //     { // IO
-                //         start = state->ioport_start = bar & 0xffffffc0;
-                //         state->ioport_end = state->ioport_start + size;
-                //         foundio = 1;
-                //     }
+                    uint32_t start = 0;
+                    if (bar & 0x1)
+                    { // IO
+                        start = state->ioport_start = bar & 0xffffffc0;
+                        state->ioport_end = state->ioport_start + size;
+                        foundio = 1;
+                    }
 
-                //     if (!(bar & 0xe) && (i == 0))
-                //     { // MEM
-                //         start = state->mem_start = bar & 0xfffffff0;
-                //         state->mem_end = state->mem_start + size;
-                //         foundmem = 1;
-                //     }
+                    if (!(bar & 0xe) && (i == 0))
+                    { // MEM
+                        start = state->mem_start = bar & 0xfffffff0;
+                        state->mem_end = state->mem_start + size;
+                        foundmem = 1;
+                    }
 
-                //     DEBUG("bar %d is %s address=0x%x size=0x%x\n", i,
-                //           bar & 0x1 ? "io port" : "memory", start, size);
-                // }
+                    DEBUG("bar %d is %s address=0x%x size=0x%x\n", i,
+                          bar & 0x1 ? "io port" : "memory", start, size);
+                }
 
-                // INFO("Adding e1000e device: bus=%u dev=%u func=%u: ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p\n",
-                //      bus->num, pdev->num, 0,
-                //      state->ioport_start, state->ioport_end,
-                //      state->mem_start, state->mem_end);
+		
+
+                INFO("Adding ac97 device: bus=%u dev=%u func=%u: ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p\n",
+                      bus->num, pdev->num, 0,
+                      state->ioport_start, state->ioport_end,
+                      state->mem_start, state->mem_end);
 
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
@@ -1424,7 +1427,7 @@ int ac97_pci_init(struct naut_info *naut)
                 //     DEBUG("init fn: end init fn --------------------\n");
 
                 //     INFO("%s operational\n", state->name);
-                }
+                //}
             }
         }
     }
