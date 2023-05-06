@@ -240,21 +240,21 @@ struct ac97_state
     // TODO: What else do we need to add? 
 };
 
-// TODO: Keep editing the file from here, using e1000e_pci.c as a reference.
 // The e1000e_pci.c file uses some bitmasks that might be useful to try to implement later
-// Regardless we need to change below to an ac97_desc_ring. 
 // I'm not sure how to use the ring buffer to store ac97_bdl_entry_desc objects yet
 
-struct e1000e_desc_ring
+// ac97_desc_ring stores ac_97_entry_desc objects
+struct ac97_desc_ring
 {
-    void *ring_buffer;
-    uint32_t head_prev;
-    uint32_t tail_pos;
-    uint32_t count;
-    void *packet_buffer;
-    uint32_t blocksize;
+    void *ring_buffer;   // pointer to ring buffer
+    uint32_t head_prev;  // pointer to head (consumer?)
+    uint32_t tail_pos;   // pointer to tail (producer?)
+    uint32_t count;      // size of buffer (number of ac97_bdl_entry_desc objects)
+    uint32_t blocksize;  // size of ac97_bdl_entry_desc object 
 };
 
+
+// TODO: rx and tx desc are the transmit and recieve buffers for e100o device, not needed for sound dev???
 struct e1000e_rx_desc
 {
     uint64_t *addr;
