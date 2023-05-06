@@ -364,6 +364,12 @@ static inline void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, u
         outb(data, dev->ioport_start + offset);
     }
 }
+
+//sets volume, what is the difference between PCM/master vol?
+static void set_volume(struct ac97_state *dev, struct volume_t *vol){
+    hda_pci_write_regw(dev,AC97_NAM_MASTER_VOL, vol);
+    hda_pci_write_regw(dev,AC97_NAM_PCM_OUT_VOL, vol);
+}
 // TODO: rx and tx desc are the transmit and recieve buffers for e100o device, not needed for sound dev???
 // struct e1000e_rx_desc
 // {
