@@ -1113,13 +1113,13 @@ int e1000e_pci_init(struct naut_info *naut)
 
     INIT_LIST_HEAD(&dev_list);
 
-    DEBUG("Finding e1000e devices\n");
+    DEBUG("Finding AC97 devices\n");
 
     list_for_each(curbus, &(pci->bus_list))
     {
         struct pci_bus *bus = list_entry(curbus, struct pci_bus, bus_node);
 
-        DEBUG("Searching PCI bus %u for E1000E devices\n", bus->num);
+        DEBUG("Searching PCI bus %u for AC97 devices\n", bus->num);
 
         list_for_each(curdev, &(bus->dev_list))
         {
@@ -1127,14 +1127,14 @@ int e1000e_pci_init(struct naut_info *naut)
             struct pci_cfg_space *cfg = &pdev->cfg;
 
             DEBUG("Device %u is a 0x%x:0x%x\n", pdev->num, cfg->vendor_id, cfg->device_id);
-            // intel vendor id and e1000e device id
-            if (cfg->vendor_id == INTEL_VENDOR_ID && cfg->device_id == E1000E_DEVICE_ID)
+            // intel vendor id and ac97 device id
+            if (cfg->vendor_id == INTEL_VENDOR_ID && cfg->device_id == AC97_DEVICE_ID)
             {
                 int foundio = 0, foundmem = 0;
 
-                DEBUG("Found E1000E Device\n");
-                struct e1000e_state *state = malloc(sizeof(struct e1000e_state));
-
+                DEBUG("Found AC97 Device\n");
+                struct ac97_state *state = malloc(sizeof(struct ac97_state));
+                
                 if (!state)
                 {
                     ERROR("Cannot allocate device\n");
@@ -1145,7 +1145,9 @@ int e1000e_pci_init(struct naut_info *naut)
 
                 // We will only support MSI for now
 
-                // find out the bar for e1000e
+                // find out the bar for AC97
+                //TODO: edit from here
+                // 6 -> # of BARs
                 for (int i = 0; i < 6; i++)
                 {
                     uint32_t bar = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
