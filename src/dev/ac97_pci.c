@@ -31,7 +31,7 @@
 #include <dev/pci.h>
 #include <nautilus/mm.h> // malloc, free
 #include <dev/ac97_pci.h>
-#include <dev/e100e_pci.h> // TODO: included so I can compile the file need to remove at a later date
+#include <dev/e1000e_pci.h> // TODO: included so I can compile the file need to remove at a later date
 #include <nautilus/irq.h>         // interrupt register
 #include <nautilus/naut_string.h> // memset, memcpy
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
@@ -177,7 +177,7 @@ struct ac97_nabm_box_desc     // describes a native audio bus register box
     uint16_t trans_samples;   // number of transferred samples in ape
     uint8_t npe;              // number of next processed buffer entry
     uint8_t ctrl;             // transfer control 
-}
+};
 
 struct ac97_nabm_desc                  // describes native audio bus registers 
 {
@@ -225,6 +225,11 @@ struct ac97_state
     // our device list
     struct list_head node;
 
+    // The following hide the details of the PCI BARs, since
+    // we only have one block of registers
+    enum { NONE, IO, MEMORY}  method;
+
+
     // Where registers are mapped into the I/O address space
     uint16_t ioport_start;
     uint16_t ioport_end;
@@ -254,7 +259,100 @@ struct ac97_desc_ring
     uint32_t blocksize;  // size of ac97_bdl_entry_desc object 
 };
 
+//volume data structure
 
+
+// accessor functions for device registers
+
+static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
+{
+    uint32_t result;
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    }
+    else
+    {
+        result = inl(dev->ioport_start + offset);
+    }
+    DEBUG_REGS("readl %08x returns %08x\n", offset, result);
+    return result;
+}
+
+static inline uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
+{
+    uint16_t result;
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    }
+    else
+    {
+        result = inw(dev->ioport_start + offset);
+    }
+    DEBUG_REGS("readw %08x returns %04x\n", offset, result);
+    return result;
+}
+
+static inline uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
+{
+    uint8_t result;
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    }
+    else
+    {
+        result = inb(dev->ioport_start + offset);
+    }
+    DEBUG_REGS("readb %08x returns %02x\n", offset, result);
+    return result;
+}
+
+static inline void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
+{
+    DEBUG_REGS("writel %08x with %08x\n", offset, data);
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    }
+    else
+    {
+        outl(data, dev->ioport_start + offset);
+    }
+}
+
+static inline void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
+{
+    DEBUG_REGS("writew %08x with %04x\n", offset, data);
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    }
+    else
+    {
+        outw(data, dev->ioport_start + offset);
+    }
+}
+
+static inline void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
+{
+    DEBUG_REGS("writeb %08x with %02x\n", offset, data);
+    if (dev->method == MEMORY)
+    {
+        uint64_t addr = dev->mem_start + offset;
+        __asm__ __volatile__ ("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    }
+    else
+    {
+        outb(data, dev->ioport_start + offset);
+    }
+}
 // TODO: rx and tx desc are the transmit and recieve buffers for e100o device, not needed for sound dev???
 // struct e1000e_rx_desc
 // {
