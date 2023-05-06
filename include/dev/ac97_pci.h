@@ -25,12 +25,12 @@
  * redistribute, and modify it as specified in the file "LICENSE.txt".
  */
 
-#ifndef __AC97_PCI
-#define __AC97_PCI
+//#ifndef __AC97_PCI
+//#define __AC97_PCI
 
 int ac97_pci_init(struct naut_info *naut);
 int ac97_pci_deinit();
 
 // TODO: Add more functions from ac97_pci.c as necessary
 
-#endif
+//#endif
