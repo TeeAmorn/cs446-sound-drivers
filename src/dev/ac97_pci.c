@@ -31,6 +31,7 @@
 #include <dev/pci.h>
 #include <nautilus/mm.h> // malloc, free
 #include <dev/ac97_pci.h>
+#include <dev/e100e_pci.h> // TODO: included so I can compile the file need to remove at a later date
 #include <nautilus/irq.h>         // interrupt register
 #include <nautilus/naut_string.h> // memset, memcpy
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
@@ -1097,7 +1098,7 @@ static struct nk_net_dev_int ops = {
     .post_send = e1000e_post_send,
 };
 
-int e1000e_pci_init(struct naut_info *naut)
+int ac97_pci_init(struct naut_info *naut)
 {
     struct pci_info *pci = naut->sys.pci;
     struct list_head *curbus, *curdev;
