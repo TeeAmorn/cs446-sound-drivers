@@ -260,7 +260,18 @@ struct ac97_desc_ring
 };
 
 //volume data structure
-
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t r_volume: 6;  // actual command
+        uint8_t rsvd_1: 2;     // node id, node 0=>root
+        uint8_t l_volume: 6; // indirect node ref
+        uint8_t rsvd_2: 1;
+        uint8_t mute: 1;     // codec id (dest)
+    } __attribute__((packed)) ;
+} __attribute__((packed)) volume_t;
 
 // accessor functions for device registers
 
