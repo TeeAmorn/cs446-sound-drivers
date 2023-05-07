@@ -1471,11 +1471,11 @@ int ac97_pci_init(struct naut_info *naut)
 
 
                 uint32_t sampling_frequency = 44100;
-                uint32_t duration = 2;
+                uint32_t duration = 1;
                 uint32_t tone_frequency = 261; //middle C
                 uint64_t buf_len = sampling_frequency * duration * 4;
                 uint8_t *buf = (uint8_t *) malloc(buf_len);
-                create_sine_wave(buf, buf_len,261 ,sampling_frequency);
+                create_sine_wave(buf, buf_len, tone_frequency,sampling_frequency);
 
                  //if (!foundmem)
                  //{
