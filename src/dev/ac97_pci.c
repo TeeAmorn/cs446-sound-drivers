@@ -1550,7 +1550,7 @@ int ac97_pci_init(struct naut_info *naut)
     return 0;
 }
 
-int e1000e_pci_deinit()
+int ac97_pci_deinit()
 {
     INFO("deinited and leaking\n");
     return 0;
