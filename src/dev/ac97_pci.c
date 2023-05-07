@@ -37,6 +37,7 @@
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
 #include <nautilus/timer.h>       // nk_sleep(ns);
 #include <nautilus/cpu.h>         // udelay
+#include <math.h>
 
 #ifndef NAUT_CONFIG_DEBUG_AC97_PCI
 #undef DEBUG_PRINT
@@ -302,6 +303,22 @@ typedef union
         uint8_t rvsd: 3;
     } __attribute__((packed)) ;
 } __attribute__((packed)) transfer_control_t;
+
+
+
+static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
+{
+    for (int i = 0, j = 0; i < buffer_len; i+=4, j++)
+    {
+        double x = (double) j * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
+        double sin_val = sin(x);
+        
+        buffer[i] = 0;
+        buffer[i + 1] = (uint8_t) (sin_val * 127.0);
+        buffer[i + 2] = 0;
+        buffer[i + 3] = (uint8_t) (sin_val * 127.0);
+    }
+}
 // accessor functions for device registers
 
 // static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
@@ -1452,6 +1469,14 @@ int ac97_pci_init(struct naut_info *naut)
                      return -1;
                  }
 
+
+                uint32_t sampling_frequency = 44100;
+                uint32_t duration = 2;
+                uint32_t tone_frequency = 261; //middle C
+                uint64_t buf_len = sampling_frequency * duration * 4;
+                uint8_t *buf = (uint8_t *) malloc(buf_len);
+                create_sine_wave(buf, buf_len,261 ,sampling_frequency);
+
                  //if (!foundmem)
                  //{
                  //    ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
@@ -1639,6 +1664,8 @@ int ac97_pci_init(struct naut_info *naut)
 
     return 0;
 }
+
+
 
 int ac97_pci_deinit()
 {
