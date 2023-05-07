@@ -273,6 +273,20 @@ typedef union
     } __attribute__((packed)) ;
 } __attribute__((packed)) volume_t;
 
+
+//global status struct
+typedef union
+{
+    uint32_t val;
+    struct
+    {
+        uint32_t rsvd_1: 20;  
+        uint8_t channel: 2;     // channel capabilities
+        uint8_t sample: 2; // sample capabilities
+        uint8_t rsvd_2: 8;
+           
+    } __attribute__((packed)) ;
+} __attribute__((packed)) global_status_t;
 // accessor functions for device registers
 
 // static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
