@@ -165,7 +165,7 @@
 #define AC97_REG_BOX_NEXT 0x0A       // number of buffer entry to be processed next
 #define AC97_REG_BOX_CTRL 0x0B       // transfer control
 
-/* Now that I think about it, I think the box might need to be represented with a struct/bitfield instead of macros */
+/* Now that I think about it, I think the box might need to be represented with a struct/bitfield. Macros might be used by convention within the code, too. */
 struct ac97_nabm_box_desc     // describes a native audio bus register box
 {
     // Should this be made into bitfields for each component, or is that overkill?
