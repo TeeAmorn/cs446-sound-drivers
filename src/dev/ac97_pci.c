@@ -1339,9 +1339,9 @@ int ac97_pci_init(struct naut_info *naut)
                       bus->num, pdev->num, 0,
                       state->ioport_start_bar0, state->ioport_end_bar0,
                       state->ioport_start_bar1, state->ioport_end_bar1);
-
                 
-
+		pci_cfg_write(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_CTRL, 0x2)
+		pci_cfg_write(bus->num, pdev->num, 0, state->ioport_start_bar0, 0x1)
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
                 // pci_cfg_writew(bus->num, pdev->num, 0, E1000E_PCI_CMD_OFFSET, pci_cmd);
