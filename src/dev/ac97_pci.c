@@ -1236,11 +1236,16 @@ static struct list_head dev_list;
 //     return res;
 // }
 
-// static struct nk_net_dev_int ops = {
-//     .get_characteristics = e1000e_get_characteristics,
-//     .post_receive = e1000e_post_receive,
-//     .post_send = e1000e_post_send,
-// };
+static struct nk_sound_dev_int ops = {
+    .get_available_sample_rates = NULL, //TODO: implement function
+    .get_available_sample_resolution = NULL, //TODO: implement function
+    .get_available_num_of_channels = NULL, //TODO: implement function
+    .get_available_scale = NULL, //TODO: implement function
+    .open_stream = NULL, //TODO: implement function
+    .close_stream = NULL, //TODO implement function
+    .write_to_stream = NULL, //TODO: implement function
+    .get_stream_params = NULL, //TODO: implement function
+};
 
 int ac97_pci_init(struct naut_info *naut)
 {
@@ -1405,34 +1410,27 @@ int ac97_pci_init(struct naut_info *naut)
 
                 DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", channels_supported, max_bit_samples);
 
-                // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
-                // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
-                // pci_cfg_writew(bus->num, pdev->num, 0, E1000E_PCI_CMD_OFFSET, pci_cmd);
-                // DEBUG("init fn: pci_cmd 0x%04x expects 0x%04x\n",
-                //       pci_cfg_readw(bus->num, pdev->num, 0, E1000E_PCI_CMD_OFFSET),
-                //       pci_cmd);
-                // DEBUG("init fn: pci status 0x%04x\n",
-                //       pci_cfg_readw(bus->num, pdev->num, 0, E1000E_PCI_STATUS_OFFSET));
+                list_add(&dev_list, &state->node);
+                sprintf(state->name, "ac97-%d", num);
+                num++;
 
-                // list_add(&dev_list, &state->node);
-                // sprintf(state->name, "e1000e-%d", num);
-                // num++;
+                state->pci_dev = pdev;
 
-                // state->pci_dev = pdev;
+                state->sounddev = nk_sound_dev_register(state->name, 0, &ops, (void *)state);
+               
+                if (!state->sounddev)
+                 {
+                     ERROR("init fn: Cannot register the e1000e device \"%s\"", state->name);
+                     return -1;
+                 }
 
-                // state->netdev = nk_net_dev_register(state->name, 0, &ops, (void *)state);
+                 //if (!foundmem)
+                 //{
+                 //    ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
+                 //    continue;
+                 //}
+                //DEBUG("AC97 device is now registered");
 
-                // if (!state->netdev)
-                // {
-                //     ERROR("init fn: Cannot register the e1000e device \"%s\"", state->name);
-                //     return -1;
-                // }
-
-                // if (!foundmem)
-                // {
-                //     ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
-                //     continue;
-                // }
 
                 // // now bring up the device / interrupts
 
