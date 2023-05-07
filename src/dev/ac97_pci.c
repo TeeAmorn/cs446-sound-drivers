@@ -287,6 +287,21 @@ typedef union
            
     } __attribute__((packed)) ;
 } __attribute__((packed)) global_status_t;
+
+//transfer control data structure
+typedef union
+{
+    uint8_t val;
+    struct
+    {
+        uint8_t dma_control: 1;  // dma controller control
+        uint8_t reset: 1;     // reset
+        uint8_t lbe_interrupt: 1; // last buffer entry interrupt enabled
+        uint8_t ioc_interrupt: 1; //ioc interrupt enaled
+        uint8_t fifo_interrupt: 1;     // fifo interrupt enabled
+        uint8_t rvsd: 3;
+    } __attribute__((packed)) ;
+} __attribute__((packed)) transfer_control_t;
 // accessor functions for device registers
 
 // static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
