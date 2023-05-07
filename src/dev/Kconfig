@@ -201,6 +201,19 @@ config E1000E_PCI
     help
       Adds the basic E1000E PCI network interface driver
 
+config AC97_PCI
+    bool "AC97 PCI Driver"
+    default n
+    help
+      Adds the ac97 sound driver
+
+config DEBUG_AC97_PCI
+    bool "Debug AC97 PCI"
+    depends on DEBUG_PRINTS && AC97_PCI
+    default n
+    help
+      Turn on debug prints for AC97 PCI devices
+
 config DEBUG_E1000E_PCI
     bool "Debug E1000E PCI"
     depends on DEBUG_PRINTS && E1000E_PCI

@@ -94,6 +94,7 @@
 #include <net/collective/ethernet/ethernet_collective.h>
 #endif
 
+
 #include <dev/apic.h>
 #include <dev/pci.h>
 #include <dev/hpet.h>
@@ -117,6 +118,8 @@
 #ifdef NAUT_CONFIG_E1000E_PCI
 #include <dev/e1000e_pci.h>
 #endif
+//TODO: TEMP
+#include <dev/ac97_pci.h>
 #ifdef NAUT_CONFIG_RAMDISK
 #include <dev/ramdisk.h>
 #endif
@@ -526,6 +529,10 @@ init (unsigned long mbd,
 #ifdef NAUT_CONFIG_E1000_PCI
     e1000_pci_init(naut);
 #endif
+
+//#ifdef NAUT_CONFIG_AC97_PCI
+    ac97_pci_init(naut);
+//#endif
 
 #ifdef NAUT_CONFIG_E1000E_PCI
     e1000e_pci_init(naut);
