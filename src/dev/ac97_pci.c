@@ -275,101 +275,101 @@ typedef union
 
 // accessor functions for device registers
 
-static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
-{
-    uint32_t result;
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-    }
-    else
-    {
-        result = inl(dev->ioport_start + offset);
-    }
-    DEBUG_REGS("readl %08x returns %08x\n", offset, result);
-    return result;
-}
+// static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
+// {
+//     uint32_t result;
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+//     }
+//     else
+//     {
+//         result = inl(dev->ioport_start + offset);
+//     }
+//     DEBUG_REGS("readl %08x returns %08x\n", offset, result);
+//     return result;
+// }
 
-static inline uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
-{
-    uint16_t result;
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-    }
-    else
-    {
-        result = inw(dev->ioport_start + offset);
-    }
-    DEBUG_REGS("readw %08x returns %04x\n", offset, result);
-    return result;
-}
+// static inline uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
+// {
+//     uint16_t result;
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+//     }
+//     else
+//     {
+//         result = inw(dev->ioport_start + offset);
+//     }
+//     DEBUG_REGS("readw %08x returns %04x\n", offset, result);
+//     return result;
+// }
 
-static inline uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
-{
-    uint8_t result;
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-    }
-    else
-    {
-        result = inb(dev->ioport_start + offset);
-    }
-    DEBUG_REGS("readb %08x returns %02x\n", offset, result);
-    return result;
-}
+// static inline uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
+// {
+//     uint8_t result;
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+//     }
+//     else
+//     {
+//         result = inb(dev->ioport_start + offset);
+//     }
+//     DEBUG_REGS("readb %08x returns %02x\n", offset, result);
+//     return result;
+// }
 
-static inline void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
-{
-    DEBUG_REGS("writel %08x with %08x\n", offset, data);
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-    }
-    else
-    {
-        outl(data, dev->ioport_start + offset);
-    }
-}
+// static inline void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
+// {
+//     DEBUG_REGS("writel %08x with %08x\n", offset, data);
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+//     }
+//     else
+//     {
+//         outl(data, dev->ioport_start + offset);
+//     }
+// }
 
-static inline void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
-{
-    DEBUG_REGS("writew %08x with %04x\n", offset, data);
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-    }
-    else
-    {
-        outw(data, dev->ioport_start + offset);
-    }
-}
+// static inline void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
+// {
+//     DEBUG_REGS("writew %08x with %04x\n", offset, data);
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+//     }
+//     else
+//     {
+//         outw(data, dev->ioport_start + offset);
+//     }
+// }
 
-static inline void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
-{
-    DEBUG_REGS("writeb %08x with %02x\n", offset, data);
-    if (dev->method == MEMORY)
-    {
-        uint64_t addr = dev->mem_start + offset;
-        __asm__ __volatile__ ("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-    }
-    else
-    {
-        outb(data, dev->ioport_start + offset);
-    }
-}
+// static inline void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
+// {
+//     DEBUG_REGS("writeb %08x with %02x\n", offset, data);
+//     if (dev->method == MEMORY)
+//     {
+//         uint64_t addr = dev->mem_start + offset;
+//         __asm__ __volatile__ ("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+//     }
+//     else
+//     {
+//         outb(data, dev->ioport_start + offset);
+//     }
+// }
 
-//sets volume, what is the difference between PCM/master vol?
-static void set_volume(struct ac97_state *dev, struct volume_t *vol){
-    hda_pci_write_regw(dev,AC97_NAM_MASTER_VOL, vol);
-    hda_pci_write_regw(dev,AC97_NAM_PCM_OUT_VOL, vol);
-}
+// //sets volume, what is the difference between PCM/master vol?
+// static void set_volume(struct ac97_state *dev, struct volume_t *vol){
+//     hda_pci_write_regw(dev,AC97_NAM_MASTER_VOL, vol);
+//     hda_pci_write_regw(dev,AC97_NAM_PCM_OUT_VOL, vol);
+// }
 // TODO: rx and tx desc are the transmit and recieve buffers for e100o device, not needed for sound dev???
 // struct e1000e_rx_desc
 // {
