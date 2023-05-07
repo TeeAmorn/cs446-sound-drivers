@@ -1389,6 +1389,34 @@ int ac97_pci_init(struct naut_info *naut)
                 //       calls an abstraction function like nk_sound_dev_get_available_sample_resolution()
 
                 DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", channels_supported, max_bit_samples);
+                
+                /* 
+                The following lines of code attempt to play sound in a quick, dirty way. This code should 
+                eventually be moved away from this function. 
+                */
+
+                // Set Master and PCM output volumes
+                pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL, 0x0000);
+                pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL, 0x0808);
+
+                // TODO: How do we get sound data into memory to be played? 
+                //       Part of this step involves creating the BDL buffer. 
+
+                // Set reset bit of output channel
+                // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
+                //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
+                pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x20);
+
+                // Write phyiscal position of BDL to the output box
+                // pci_cfg_writel(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, bdl_addr);
+
+                // TODO: Write number of last valid buffer entry to the output box 
+                //       This will use a pci
+
+                // Set bit for transferring data in the output box
+
+
+
 
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
