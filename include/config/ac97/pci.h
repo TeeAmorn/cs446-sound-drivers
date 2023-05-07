@@ -1,0 +1,1 @@
+#define NAUT_CONFIG_AC97_PCI 1

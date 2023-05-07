@@ -1265,7 +1265,7 @@ int ac97_pci_init(struct naut_info *naut)
                 //TODO: edit from here
                 // 6 -> # of BARs
                 
-		 for (int i = 0; i < 6; i++)
+		        for (int i = 0; i < 6; i++)
                 {
                     uint32_t bar = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
                     uint32_t size;
@@ -1339,9 +1339,24 @@ int ac97_pci_init(struct naut_info *naut)
                       bus->num, pdev->num, 0,
                       state->ioport_start_bar0, state->ioport_end_bar0,
                       state->ioport_start_bar1, state->ioport_end_bar1);
+
+                /* REFERENCE: https://wiki.osdev.org/AC97
+                "In initalization of sound card you must resume card from cold reset and set power for it. It can be done by write value 0x2 to 
+                Global Control register if you do not want interrupts, or 0x3 if you want interrupts. After this, you should write any value to 
+                NAM reset register to set all NAM register to their defaults. After this, you can read card capability info from Global Status 
+                register what means how many channels it suport and if is 20 bit audio samples supported. Now is sound card ready to use."
+                */
                 
-		pci_cfg_write(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_CTRL, 0x2)
-		pci_cfg_write(bus->num, pdev->num, 0, state->ioport_start_bar0, 0x1)
+                // TODO: Eventually we want to write 0x3 instead of 0x2 to enable interrupts
+		        pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_CTRL, 0x2);
+
+                // Write to NAM reset register to default the device
+		        pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0, 0x1);
+
+                // Read card capabilities register
+                uint32_t stat_reg = pci_cfg_readw(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_STATUS);
+                
+
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
                 // pci_cfg_writew(bus->num, pdev->num, 0, E1000E_PCI_CMD_OFFSET, pci_cmd);
