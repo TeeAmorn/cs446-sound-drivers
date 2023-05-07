@@ -231,12 +231,12 @@ struct ac97_state
 
 
     // Where registers are mapped into the I/O address space
-    uint16_t ioport_start;
-    uint16_t ioport_end;
+    uint16_t ioport_start_bar0;
+    uint16_t ioport_end_bar0;
+    
+    uint16_t ioport_start_bar1;
+    uint16_t ioport_end_bar1;
 
-    // Where registers are mapped into the physical memory address space
-    uint64_t mem_start;
-    uint64_t mem_end;
 
     char name[DEV_NAME_LEN];
 
@@ -1316,18 +1316,17 @@ int ac97_pci_init(struct naut_info *naut)
                     }
 
                     uint32_t start = 0;
-                    if (bar & 0x1)
+                    if (bar & 0x1 && (i==0))
                     { // IO
-                        start = state->ioport_start = bar & 0xffffffc0;
-                        state->ioport_end = state->ioport_start + size;
+                        start = state->ioport_start_bar0 = bar & 0xffffffc0;
+                        state->ioport_end_bar0 = state->ioport_start_bar0 + size;
                         foundio = 1;
                     }
-
-                    if (!(bar & 0xe) && (i == 0))
-                    { // MEM
-                        start = state->mem_start = bar & 0xfffffff0;
-                        state->mem_end = state->mem_start + size;
-                        foundmem = 1;
+                    if (bar & 0x1 && (i==1))
+                    { // IO
+                        start = state->ioport_start_bar1 = bar & 0xffffffc0;
+                        state->ioport_end_bar1 = state->ioport_start_bar1 + size;
+                        foundio = 1;
                     }
 
                     DEBUG("bar %d is %s address=0x%x size=0x%x\n", i,
@@ -1336,10 +1335,10 @@ int ac97_pci_init(struct naut_info *naut)
 
 		
 
-                INFO("Adding ac97 device: bus=%u dev=%u func=%u: ioport_start=%p ioport_end=%p mem_start=%p mem_end=%p\n",
+                INFO("Adding ac97 device: bus=%u dev=%u func=%u: ioport_start_bar0=%p ioport_end_bar0=%p ioport_start_bar1=%p ioport_end_bar1=%p\n",
                       bus->num, pdev->num, 0,
-                      state->ioport_start, state->ioport_end,
-                      state->mem_start, state->mem_end);
+                      state->ioport_start_bar0, state->ioport_end_bar0,
+                      state->ioport_start_bar1, state->ioport_end_bar1);
 
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
