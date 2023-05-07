@@ -1355,7 +1355,26 @@ int ac97_pci_init(struct naut_info *naut)
 
                 // Read card capabilities register
                 uint32_t stat_reg = pci_cfg_readw(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_STATUS);
-                
+
+                /* Isolate 20th and 21st bits to see how many channels this AC97 can support */
+                uint32_t channels_supported = (stat_reg & 0x00300000) >> 20; 
+                // Translate bits to integer channel capabilities
+                if (channels_supported == 0) channels_supported = 2;
+                else if (channels_supported == 1) channels_supported = 4;
+                else if (channels_supported == 2) channels_supported = 6;
+                else DEBUG("AC97 channel bits were set to 11, indicating reserved behavior.")
+
+                /* Isolate 22nd and 23rd bits to see the maximum supported bit granularity of samples */
+                uint32_t max_bit_samples = (stat_reg & 0x00C00000) >> 22;
+                // Translate bits to integer channel capabilities
+                if (max_bit_samples == 1) max_bit_samples = 20;
+                else max_bit_samples = 16;
+
+                // TODO: The information from the card capabilities register should probably be stored in
+                //       the device state so we know which configuration options are possible when someone
+                //       calls an abstraction function like nk_sound_dev_get_available_sample_resolution()
+
+                DEBUG("This AC97 supports %d channels and %d-bit samples.\n", channels_supported, samples_supported);
 
                 // uint16_t pci_cmd = E1000E_PCI_CMD_MEM_ACCESS_EN | E1000E_PCI_CMD_IO_ACCESS_EN | E1000E_PCI_CMD_LANRW_EN; // | E1000E_PCI_CMD_INT_DISABLE;
                 // DEBUG("init fn: new pci cmd: 0x%04x\n", pci_cmd);
