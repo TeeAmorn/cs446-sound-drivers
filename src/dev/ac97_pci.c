@@ -577,6 +577,7 @@ static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t ton
 
 // // list of discovered devices
 static struct list_head dev_list;
+static struct ac97_state *dirty_state; 
 
 // // initialize the tx ring buffer to store transmit descriptors
 // static int e1000e_init_transmit_ring(struct e1000e_state *state)
@@ -1453,6 +1454,8 @@ int ac97_pci_init(struct naut_info *naut)
                      return -1;
                  }
 
+                dirty_state = state; // Remove this code when we can get sound working in a non-dirty way
+
                  //if (!foundmem)
                  //{
                  //    ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
@@ -1643,98 +1646,82 @@ int ac97_pci_init(struct naut_info *naut)
 
 int ac97_dirty_sound()
 {
-    /* This function tests if sound can be played through the AC97 Sound Card in a very convoluted way.
-       It asks Nautilus for the PCI bus, and uses the same list_for_each loop as the ac97_init function.
-       Regardless, I think that trying to play sound through the initialization is a bad idea because
-       we can never sleep before we clean memory back up. Instead, this function will be exposed through
-       the shell interface of Nautilus. */
+    /* 
+    The ac97_pci_init() function allocates a dirty static AC97 state struct in its last line.
+    This function uses that state to write directly to the PCI bus to set up some sound to
+    be played. 
+    */
+    DEBUG("Testing sound through dirty AC97 static state struct...\n");
 
-    // Query the device list for AC97 devices
-    DEBUG("Testing sound through PCI Device List...\n");
-    struct list_head *cur;
-    list_for_each(cur, &dev_list)
+    // Grab dirty state elements to help us write through the PCI
+    uint32_t bus_num = dirty_state->bus_num;
+    uint32_t pdev_num = dirty_state->pdev_num;
+
+    // Set Master and PCM output volumes
+    DEBUG("Setting master and PCM output volumes...\n");
+    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL, 0x0000);
+    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL, 0x0808);
+
+    // Create an audio buffer and fill it with sine wave samples
+    DEBUG("Creating and filling an audio buffer with sine wave samples...\n");
+    uint32_t sampling_frequency = 44100;
+    uint32_t duration = 1;
+    uint32_t tone_frequency = 261; // middle C
+    uint64_t buf_len = sampling_frequency * duration * 4;
+    uint16_t *sine_buf = (uint16_t *)malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
+    create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
+
+    // Initialize the BDL
+    // THEORY: For now, we might not have to mess with allocating a full ring buffer.
+    //         I think I can just describe a single entry and let the device know that it's the only one.
+    DEBUG("Initializing the sine wave BDL entry...\n");
+    void *sine_entry = malloc(sizeof(ac97_bdl_entry)); // if this doesn't work, just do sizeof(uint64_t) for now
+    if (!sine_entry)
     {
-        struct nk_dev *d = list_entry(cur, struct nk_dev, dev_list_node);
-
-        // We can identify AC97s by name
-        char* dev_name = d->name;
-        if (strlen(dev_name) >= 4) // Make sure the device name is long enough
-        {
-            // ChatGPT wrote this input check lmao
-            if (dev_name[0] == 'a' && dev_name[1] == 'c' && dev_name[2] == '9' && dev_name[3] == '7')
-            {
-                // Grab dirty state elements to help us write through the PCI 
-                struct ac97_state* state = (struct ac97_state *)d->state;
-                uint32_t bus_num = state->bus_num;
-                uint32_t pdev_num = state->pdev_num;
-
-                // Set Master and PCM output volumes
-                DEBUG("Setting master and PCM output volumes...\n");
-                pci_cfg_writew(bus_num, pdev_num, 0, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL, 0x0000);
-                pci_cfg_writew(bus_num, pdev_num, 0, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL, 0x0808);
-
-                // Create an audio buffer and fill it with sine wave samples
-                DEBUG("Creating and filling an audio buffer with sine wave samples...\n");
-                uint32_t sampling_frequency = 44100;
-                uint32_t duration = 1;
-                uint32_t tone_frequency = 261; // middle C
-                uint64_t buf_len = sampling_frequency * duration * 4;
-                uint16_t *sine_buf = (uint16_t *)malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
-                create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
-
-                // Initialize the BDL
-                // THEORY: For now, we might not have to mess with allocating a full ring buffer.
-                //         I think I can just describe a single entry and let the device know that it's the only one.
-                DEBUG("Initializing the sine wave BDL entry...\n");
-                void *sine_entry = malloc(sizeof(ac97_bdl_entry)); // if this doesn't work, just do sizeof(uint64_t) for now
-                if (!sine_entry)
-                {
-                     ERROR("Could not allocate sine wave BDL entry\n");
-                     return -1;
-                }
-                memset(sine_entry, 0, sizeof(ac97_bdl_entry));
-
-                // sine_entry = (struct ac97_bdl_entry *)sine_entry;
-                ((ac97_bdl_entry *)sine_entry)->addr = sine_buf;
-                ((ac97_bdl_entry *)sine_entry)->n_entries = buf_len;
-
-                // Set reset bit of output channel
-                // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
-                //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
-                DEBUG("Setting reset bit of output box...\n");
-                pci_cfg_writew(bus_num, pdev_num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x20);
-
-                // Write phyiscal position of BDL to the output box
-                //
-                DEBUG("Telling device where the BDL is located...\n");
-                pci_cfg_writel(bus_num, pdev_num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, sine_entry);
-
-                // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
-                //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
-                //       because I don't know how to write fewer than 16 bits at a time.
-                DEBUG("Writing number of last valid buffer entry...\n");
-                pci_cfg_writew(bus_num, pdev_num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE, 0x10);
-
-                // Set bit for transferring data in the output box
-                // TODO: This is janky, it is setting the next processed buffer entry alongside setting the transfer bit
-                DEBUG("Setting bit to transfer data...\n");
-                pci_cfg_writew(bus_num, pdev_num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x10);
-
-                /* Put Nautilus to sleep for 10s while the audio is hopefully played. Afterwards, free the buffer. */
-                DEBUG("Freeing buffer and BDL entry...\n");
-                nk_sleep(10000000000); // This causes a PANIC... no sleeping in the boot thread?
-                //  TODO: Find some function to put here that takes some time, so that sound can be played for
-                //        at least a moment before the buffers are freed
-                free(sine_buf);
-                free(sine_entry);
-            }
-        }
+        ERROR("Could not allocate sine wave BDL entry\n");
+        return -1;
     }
+    memset(sine_entry, 0, sizeof(ac97_bdl_entry));
+
+    // sine_entry = (struct ac97_bdl_entry *)sine_entry;
+    ((ac97_bdl_entry *)sine_entry)->addr = sine_buf;
+    ((ac97_bdl_entry *)sine_entry)->n_entries = buf_len;
+
+    // Set reset bit of output channel
+    // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
+    //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
+    DEBUG("Setting reset bit of output box...\n");
+    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x20);
+
+    // Write phyiscal position of BDL to the output box
+    //
+    DEBUG("Telling device where the BDL is located...\n");
+    pci_cfg_writel(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, sine_entry);
+
+    // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
+    //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
+    //       because I don't know how to write fewer than 16 bits at a time.
+    DEBUG("Writing number of last valid buffer entry...\n");
+    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE, 0x10);
+
+    // Set bit for transferring data in the output box
+    // TODO: This is janky, it is setting the next processed buffer entry alongside setting the transfer bit
+    DEBUG("Setting bit to transfer data...\n");
+    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x10);
+
+    /* Put Nautilus to sleep for 5s while the audio is hopefully played. Afterwards, free the buffer. */
+    DEBUG("Sleeping for 5s...\n");
+    nk_sleep(5000000000); 
+
+    /* Free buffer and BDL entry that we just allocated */
+    DEBUG("Freeing buffer and BDL entry...\n");
+    free(sine_buf);
+    free(sine_entry);
 
     return 0;
 }
 
-static int handle_test_sound(char * buf, void * priv)
+static int handle_test_sound(char *buf, void *priv)
 {
     return ac97_dirty_sound();
 }
@@ -1752,53 +1739,53 @@ int ac97_pci_deinit()
     return 0;
 }
 
-            // //
-            // // DEBUGGING AND TIMING ROUTINES FOLLOW
-            // //
-            // //
+// //
+// // DEBUGGING AND TIMING ROUTINES FOLLOW
+// //
+// //
 
-            // #if TIMING
-            // static void e1000e_read_write(struct e1000e_state *state)
-            // {
-            //     INFO("Testing Read Write Delay\n");
-            //     volatile uint64_t mem_var = 0x55;
-            //     uint64_t tsc_sta = 0;
-            //     uint64_t tsc_end = 0;
-            //     uint64_t tsc_delay = 0;
+// #if TIMING
+// static void e1000e_read_write(struct e1000e_state *state)
+// {
+//     INFO("Testing Read Write Delay\n");
+//     volatile uint64_t mem_var = 0x55;
+//     uint64_t tsc_sta = 0;
+//     uint64_t tsc_end = 0;
+//     uint64_t tsc_delay = 0;
 
-            //     INFO("Reading Delay from MEM\n");
-            //     TIMING_GET_TSC(tsc_sta);
-            //     uint64_t read_var = mem_var;
-            //     TIMING_GET_TSC(tsc_end);
-            //     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-            //     INFO("Reading Delay %lu\n\n", tsc_delay);
+//     INFO("Reading Delay from MEM\n");
+//     TIMING_GET_TSC(tsc_sta);
+//     uint64_t read_var = mem_var;
+//     TIMING_GET_TSC(tsc_end);
+//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
+//     INFO("Reading Delay %lu\n\n", tsc_delay);
 
-            //     INFO("Writing Delay from MEM\n");
-            //     TIMING_GET_TSC(tsc_sta);
-            //     mem_var = 0x66;
-            //     TIMING_GET_TSC(tsc_end);
-            //     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-            //     INFO("Writing Delay %lu\n\n", tsc_delay);
+//     INFO("Writing Delay from MEM\n");
+//     TIMING_GET_TSC(tsc_sta);
+//     mem_var = 0x66;
+//     TIMING_GET_TSC(tsc_end);
+//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
+//     INFO("Writing Delay %lu\n\n", tsc_delay);
 
-            //     INFO("Reading Delay from NIC\n");
-            //     TIMING_GET_TSC(tsc_sta);
-            //     uint32_t tctl_reg = READ_MEM(state, E1000E_TCTL_OFFSET);
-            //     TIMING_GET_TSC(tsc_end);
-            //     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-            //     INFO("Reading Delay %lu\n\n", tsc_delay);
+//     INFO("Reading Delay from NIC\n");
+//     TIMING_GET_TSC(tsc_sta);
+//     uint32_t tctl_reg = READ_MEM(state, E1000E_TCTL_OFFSET);
+//     TIMING_GET_TSC(tsc_end);
+//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
+//     INFO("Reading Delay %lu\n\n", tsc_delay);
 
-            //     INFO("Writing Delayi from NIC\n");
-            //     TIMING_GET_TSC(tsc_sta);
-            //     WRITE_MEM(state, E1000E_AIT_OFFSET, 0);
-            //     TIMING_GET_TSC(tsc_end);
-            //     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-            //     INFO("Writing Delay, %lu\n\n", tsc_delay);
+//     INFO("Writing Delayi from NIC\n");
+//     TIMING_GET_TSC(tsc_sta);
+//     WRITE_MEM(state, E1000E_AIT_OFFSET, 0);
+//     TIMING_GET_TSC(tsc_end);
+//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
+//     INFO("Writing Delay, %lu\n\n", tsc_delay);
 
-            //     INFO("Reading pci_cfg_readw Delay\n");
-            //     TIMING_GET_TSC(tsc_sta);
-            //     uint32_t status_pci = pci_dev_cfg_readw(state->pci_dev, E1000E_PCI_STATUS_OFFSET);
-            //     TIMING_GET_TSC(tsc_end);
-            //     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-            //     INFO("Reading pci_dev_cfg_readw Delay, %lu\n\n", tsc_delay);
-            // }
-            // #endif
+//     INFO("Reading pci_cfg_readw Delay\n");
+//     TIMING_GET_TSC(tsc_sta);
+//     uint32_t status_pci = pci_dev_cfg_readw(state->pci_dev, E1000E_PCI_STATUS_OFFSET);
+//     TIMING_GET_TSC(tsc_end);
+//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
+//     INFO("Reading pci_dev_cfg_readw Delay, %lu\n\n", tsc_delay);
+// }
+// #endif
