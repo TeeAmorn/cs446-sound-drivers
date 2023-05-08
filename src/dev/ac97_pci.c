@@ -1486,7 +1486,9 @@ int ac97_pci_init(struct naut_info *naut)
 
                 /* Put Nautilus to sleep for 10s while the audio is hopefully played. Afterwards, free the buffer. */
                 DEBUG("Freeing buffer and BDL entry...\n");
-                sleep(10); //nk_sleep(10000000000); // Not sure this is freezing how I want 
+                //nk_sleep(10000000000); // This causes a PANIC... no sleeping in the boot thread?
+                // TODO: Find some function to put here that takes some time, so that sound can be played for
+                //       at least a moment before the buffers are freed
                 free(sine_buf);
                 free(sine_entry);
 
