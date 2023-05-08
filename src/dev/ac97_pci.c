@@ -203,17 +203,18 @@ struct ac97_nabm_desc                  // describes native audio bus registers
     } global_status;                   // describes global status register
 } __attribute__((packed));
 
-struct ac97_bdl_entry_desc     // describes an ac97 bdl entry 
+typedef union                      // describes an ac97 bdl entry
 {
-    uint32_t* addr;            // physical address to sound data in memory
-    uint16_t total;            // number of samples in this buffer
-    struct 
+    uint64_t val;
+    struct
     {
-        uint16_t rsvd : 14;    // reserved
-        uint8_t last  : 1;     // last entry of buffer, stop playing
-        uint8_t ioc   : 1;     // interrupt fired when data from this entry is transferred
-    } bit; // Is the bitfield necessary since this isn't representing a register? The OSDev page makes it seem like this should have a 
-} __attribute__((packed));
+        uint32_t addr : 32;        // physical address to sound data in memory
+        uint16_t n_entries : 16;   // number of samples in the buffer this entry describes
+        uint16_t rsvd : 14;        // reserved
+        uint8_t last : 1;          // flags last entry of buffer, stop playing
+        uint8_t ioc : 1;           // interrupt fired when data from this entry is transferred
+    } __attribute__((packed));
+} __attribute__((packed)) ac97_bdl_entry;
 
 struct ac97_state 
 {
@@ -306,7 +307,7 @@ typedef union
 
 
 
-static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
+static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
     for (int i = 0, j = 0; i < buffer_len; i+=4, j++)
     {
@@ -314,9 +315,9 @@ static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len, uint64_t tone
         double sin_val = sin(x);
         
         buffer[i] = 0;
-        buffer[i + 1] = (uint8_t) (sin_val * 127.0);
+        buffer[i + 1] = (uint16_t) (sin_val * 127.0);
         buffer[i + 2] = 0;
-        buffer[i + 3] = (uint8_t) (sin_val * 127.0);
+        buffer[i + 3] = (uint16_t) (sin_val * 127.0);
     }
 }
 // accessor functions for device registers
@@ -1270,7 +1271,7 @@ int ac97_pci_init(struct naut_info *naut)
     struct list_head *curbus, *curdev;
     uint16_t num = 0;
 
-    INFO("init\n");
+    DEBUG("init\n");
 
     if (!pci)
     {
@@ -1433,28 +1434,63 @@ int ac97_pci_init(struct naut_info *naut)
                 */
 
                 // Set Master and PCM output volumes
+                DEBUG("Setting master and PCM output volumes...\n");
                 pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL, 0x0000);
                 pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL, 0x0808);
 
-                // TODO: How do we get sound data into memory to be played? 
-                //       Part of this step involves creating the BDL buffer. 
+                // Create an audio buffer and fill it with sine wave samples
+                DEBUG("Creating and filling an audio buffer with sine wave samples...\n");
+                uint32_t sampling_frequency = 44100;
+                uint32_t duration = 1;
+                uint32_t tone_frequency = 261; // middle C
+                uint64_t buf_len = sampling_frequency * duration * 4;
+                uint16_t *sine_buf = (uint16_t *)malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
+                create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
+
+                // Initialize the BDL
+                // THEORY: For now, we might not have to mess with allocating a full ring buffer.
+                //         I think I can just describe a single entry and let the device know that it's the only one. 
+                DEBUG("Initializing the sine wave BDL entry...\n");
+                void *sine_entry = malloc(sizeof(ac97_bdl_entry)); // if this doesn't work, just do sizeof(uint64_t) for now
+                if (!sine_entry) {
+                    ERROR("Could not allocate sine wave BDL entry\n");
+                    return -1;
+                }
+                memset(sine_entry, 0, sizeof(ac97_bdl_entry));
+                
+                //sine_entry = (struct ac97_bdl_entry *)sine_entry;
+                ((ac97_bdl_entry *)sine_entry)->addr = sine_buf;
+                ((ac97_bdl_entry *)sine_entry)->n_entries = buf_len;
 
                 // Set reset bit of output channel
                 // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
                 //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
+                DEBUG("Setting reset bit of output box...\n");
                 pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x20);
 
                 // Write phyiscal position of BDL to the output box
-                // pci_cfg_writel(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, bdl_addr);
+                //
+                DEBUG("Telling device where the BDL is located...\n");
+                pci_cfg_writel(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, sine_entry);
 
-                // TODO: Write number of last valid buffer entry to the output box 
-                //       This will use a pci
+                // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
+                //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
+                //       because I don't know how to write fewer than 16 bits at a time. 
+                DEBUG("Writing number of last valid buffer entry...\n");
+                pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE, 0x10);
 
                 // Set bit for transferring data in the output box
+                // TODO: This is janky, it is setting the next processed buffer entry alongside setting the transfer bit
+                DEBUG("Setting bit to transfer data...\n");
+                pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x10);
 
+                /* Put Nautilus to sleep for 10s while the audio is hopefully played. Afterwards, free the buffer. */
+                DEBUG("Freeing buffer and BDL entry...\n");
+                sleep(10); //nk_sleep(10000000000); // Not sure this is freezing how I want 
+                free(sine_buf);
+                free(sine_entry);
 
-
-
+                /* Register this AC97 device */
                 list_add(&dev_list, &state->node);
                 sprintf(state->name, "ac97-%d", num);
                 num++;
@@ -1465,17 +1501,9 @@ int ac97_pci_init(struct naut_info *naut)
                
                 if (!state->sounddev)
                  {
-                     ERROR("init fn: Cannot register the e1000e device \"%s\"", state->name);
+                     ERROR("init fn: Cannot register the ac97 device \"%s\"", state->name);
                      return -1;
                  }
-
-
-                uint32_t sampling_frequency = 44100;
-                uint32_t duration = 1;
-                uint32_t tone_frequency = 261; //middle C
-                uint64_t buf_len = sampling_frequency * duration * 4;
-                uint8_t *buf = (uint8_t *) malloc(buf_len);
-                create_sine_wave(buf, buf_len, tone_frequency,sampling_frequency);
 
                  //if (!foundmem)
                  //{
