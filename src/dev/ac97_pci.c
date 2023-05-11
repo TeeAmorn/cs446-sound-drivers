@@ -217,6 +217,16 @@ typedef union                      // describes an ac97 bdl entry
     } __attribute__((packed));
 } __attribute__((packed)) ac97_bdl_entry;
 
+
+typedef union 
+{
+    uint8_t val;
+    struct{
+        uint8_t last_entry : 5;
+        uint8_t rsvd : 3;
+    }__attribute__((packed));
+}__attribute__((packed)) last_valid_entry_t;
+
 struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an ac97_state? 
 {
     // a pointer to the base class
@@ -1411,13 +1421,13 @@ int ac97_pci_init(struct naut_info *naut)
                 */
                 
                 // TODO: Eventually we want to write 0x3 instead of 0x2 to enable interrupts
-		        pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_CTRL, 0x2);
+		        outw(0x2, state->ioport_start_bar1 + AC97_NABM_CTRL);
 
                 // Write to NAM reset register to default the device
-		        pci_cfg_writew(bus->num, pdev->num, 0, state->ioport_start_bar0, 0x1);
+		        outw(0x1, state->ioport_start_bar0);
 
                 // Read card capabilities register
-                uint32_t stat_reg = pci_cfg_readw(bus->num, pdev->num, 0, state->ioport_start_bar1 + AC97_NABM_STATUS);
+                uint32_t stat_reg = inw(state->ioport_start_bar1 + AC97_NABM_STATUS);
 
                 /* Isolate 20th and 21st bits to see how many channels this AC97 can support */
                 uint32_t channels_supported = (stat_reg & 0x00300000) >> 20; 
@@ -1659,8 +1669,18 @@ int ac97_dirty_sound()
 
     // Set Master and PCM output volumes
     DEBUG("Setting master and PCM output volumes...\n");
-    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL, 0x0000);
-    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL, 0x0808);
+    uint16_t vol_int_m = inw(dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
+    uint16_t vol_int_p = inw(dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
+    volume_t master_vol = (volume_t) vol_int_m;
+    volume_t pcm_vol = (volume_t) vol_int_p;
+    //using 34 because it is somewhere in the middle (arbitrary)
+    master_vol.l_volume = 34;
+    master_vol.r_volume = 34;
+    pcm_vol.l_volume = 34;
+    pcm_vol.r_volume = 34;
+
+    outw(master_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
+    outw(pcm_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
     // Create an audio buffer and fill it with sine wave samples
     DEBUG("Creating and filling an audio buffer with sine wave samples...\n");
@@ -1690,24 +1710,37 @@ int ac97_dirty_sound()
     // Set reset bit of output channel
     // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
     //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
+
+    //using transfer control struct here
+    uint8_t tc_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    transfer_control_t tc = (transfer_control_t) tc_int;
+    tc.reset = 1;
     DEBUG("Setting reset bit of output box...\n");
-    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x20);
+    outb(tc.val,dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
 
     // Write phyiscal position of BDL to the output box
     //
     DEBUG("Telling device where the BDL is located...\n");
-    pci_cfg_writel(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR, sine_entry);
+    outl(sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
 
     // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
     //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
     //       because I don't know how to write fewer than 16 bits at a time.
+
+    //grabbing struct, setting relevent field, rewriting
+    uint8_t lve_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+    last_valid_entry_t lve = (last_valid_entry_t) lve_int;
+    lve.last_entry = 1;
     DEBUG("Writing number of last valid buffer entry...\n");
-    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE, 0x10);
+    outb(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
 
     // Set bit for transferring data in the output box
     // TODO: This is janky, it is setting the next processed buffer entry alongside setting the transfer bit
+    uint8_t tc_int_td = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    transfer_control_t tc_td = (transfer_control_t) tc_int;
+    tc_td.dma_control = 1;
     DEBUG("Setting bit to transfer data...\n");
-    pci_cfg_writew(bus_num, pdev_num, 0, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT, 0x10);
+    outb(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
 
     /* Put Nautilus to sleep for 5s while the audio is hopefully played. Afterwards, free the buffer. */
     DEBUG("Sleeping for 5s...\n");
