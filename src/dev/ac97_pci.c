@@ -1774,15 +1774,18 @@ int ac97_dirty_sound()
     DEBUG("Telling device that the BDL is located at %d...\n", &sine_entry);
     outl(&sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
 
+    // First bit is read-only, and 0. I think this is for the sake of alignment of addresses.
+    // Regardless, I don't think we'll ever be passed an odd address from malloc, but just in 
+    // case, I want to add this debug to ensure our write to the DMA is consistent. 
+    DEBUG("SANITY CHECK: Asking device where the BDL is located...\n");
+    uint32_t bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("BDL is at: %d\n", bdl_pmio_addr); // First bits is Read-Only... how do we write an address of 29 bits?
+
     /*
     According to this manual: https://www.intel.com/Assets/PDF/manual/252751.pdf
     Only the last bit of the buffer pointer must be 0. This is to ensure samples never straddle
     DWord boundaries. I think this means that we don't need to do any manipulation of the addresses
     as we write them, since won't they always be even to align the structs anyways? 
-
-    DEBUG("SANITY CHECK: Asking device where the BDL is located...\n");
-    uint32_t bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
-    DEBUG("BDL is at: %d\n", bdl_pmio_addr >> 3); // First three bits are Read-Only... how do we write an address of 29 bits?
     */
 
     // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
@@ -1797,7 +1800,7 @@ int ac97_dirty_sound()
     last_valid_entry_t lve = (last_valid_entry_t) lve_int;
     lve.last_entry = 1; 
     DEBUG("Telling the device there is only one buffer entry...\n");
-    outb(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
+    outb(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
 
     /*
     STEP 6) Set bit to activate transfer of data
