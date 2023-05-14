@@ -1725,7 +1725,7 @@ int ac97_dirty_sound()
     // sound data. An entry can only transfer up to 0xFFFE samples!
     uint16_t buf_len = 0xFFFE; // uint64_t buf_len = sampling_frequency * duration * 4;
 
-    uint16_t *sine_buf = (uint16_t *)malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
+    uint16_t *sine_buf = (uint16_t *)kmem_malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
     DEBUG("Creating and filling an audio buffer with %d sine wave samples...\n", buf_len);
     create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
 
@@ -1823,7 +1823,7 @@ int ac97_dirty_sound()
 
     /* Free buffer entry that we just allocated */
     DEBUG("Freeing buffer entry from memory...\n");
-    free(sine_buf);
+    kmem_free(sine_buf);
 
     return 0;
 }
