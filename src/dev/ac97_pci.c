@@ -1808,7 +1808,7 @@ int ac97_dirty_sound()
     // grabbing struct, setting relevant field, rewriting
     uint8_t tc_int_td = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc_td = (transfer_control_t) tc_int;
-    tc_td.dma_control = 0;
+    tc_td.dma_control = 1;
     // Turn off all interrupts for now
     tc_td.lbe_interrupt = 0;
     tc_td.ioc_interrupt = 0;
