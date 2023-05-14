@@ -90,6 +90,7 @@
 
 #define BDL_DSC_COUNT 32
 #define RESTART_DELAY 5
+#define MAX_BUFFER_SIZE 0xFFFE // A BDL entry can only transfer this many samples
 
 /*
 // Constant variables
@@ -277,20 +278,33 @@ struct ac97_desc_ring
     uint32_t blocksize;  // size of ac97_bdl_entry_desc object 
 };
 
-//volume data structure
+//master volume data structure
 typedef union
 {
     uint16_t val;
     struct
     {
-        uint8_t r_volume: 6;  // actual command
-        uint8_t rsvd_1: 2;     // node id, node 0=>root
-        uint8_t l_volume: 6; // indirect node ref
+        uint8_t r_volume: 6; 
+        uint8_t rsvd_1: 2;    
+        uint8_t l_volume: 6; 
         uint8_t rsvd_2: 1;
-        uint8_t mute: 1;     // codec id (dest)
+        uint8_t mute: 1; 
     } __attribute__((packed)) ;
-} __attribute__((packed)) volume_t;
+} __attribute__((packed)) m_volume_t;
 
+// output PCM volume data structure
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t r_volume : 5;
+        uint8_t rsvd_1 : 3;
+        uint8_t l_volume : 5;
+        uint8_t rsvd_2 : 2;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) pcm_volume_t;
 
 //global status struct
 typedef union
@@ -323,7 +337,7 @@ typedef union
 
 
 
-static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
+static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
     for (int i = 0, j = 0; i < buffer_len; i+=4, j++)
     {
@@ -1667,78 +1681,127 @@ int ac97_dirty_sound()
     uint32_t bus_num = dirty_state->bus_num;
     uint32_t pdev_num = dirty_state->pdev_num;
 
-    // Set Master and PCM output volumes
+    /*
+    The code in this function follows the directions from https://wiki.osdev.org/AC97 under
+    the section "Playing Sound"
+    ---------------------------------------------------------------------------------------
+    */
+
+    /*
+    Step 1) Set master volume and PCM output volume
+    */
     DEBUG("Setting master and PCM output volumes...\n");
     uint16_t vol_int_m = inw(dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
     uint16_t vol_int_p = inw(dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
-    volume_t master_vol = (volume_t) vol_int_m;
-    volume_t pcm_vol = (volume_t) vol_int_p;
-    //using 34 because it is somewhere in the middle (arbitrary)
-    master_vol.l_volume = 34;
-    master_vol.r_volume = 34;
-    pcm_vol.l_volume = 34;
-    pcm_vol.r_volume = 34;
+    m_volume_t master_vol = (m_volume_t) vol_int_m;
+    pcm_volume_t pcm_vol = (pcm_volume_t) vol_int_p;
+
+    // Master volume is stepped from 0-63. Using 32 because it is somewhere in the middle (arbitrary)
+    master_vol.l_volume = 32;
+    master_vol.r_volume = 32;
+    master_vol.mute = 0; // Ensure the master volume is not mute
+
+    // PCM Output volume is stepped from 0-31. Using 16 because it is somewhere in the middle (arbitrary)
+    pcm_vol.l_volume = 16;
+    pcm_vol.r_volume = 16;
+    pcm_vol.mute = 0; // Ensure the PCM volume is not mute
 
     outw(master_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
     outw(pcm_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
+    /*
+    Step 2) Load sound data to memory and describe it in Buffer Descriptor List
+    */
     // Create an audio buffer and fill it with sine wave samples
-    DEBUG("Creating and filling an audio buffer with sine wave samples...\n");
     uint32_t sampling_frequency = 44100;
     uint32_t duration = 1;
     uint32_t tone_frequency = 261; // middle C
-    uint64_t buf_len = sampling_frequency * duration * 4;
+
+    // With the parameters above, we'd actually need to create multiple BDL entries to store the
+    // sound data. An entry can only transfer up to 0xFFFE samples!
+    uint16_t buf_len = 0xFFFE; // uint64_t buf_len = sampling_frequency * duration * 4;
+
     uint16_t *sine_buf = (uint16_t *)malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
+    DEBUG("Creating and filling an audio buffer with %d sine wave samples...\n", buf_len);
     create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
 
     // Initialize the BDL
     // THEORY: For now, we might not have to mess with allocating a full ring buffer.
-    //         I think I can just describe a single entry and let the device know that it's the only one.
+    //         I think we can just describe a single entry and let the device know that it's the only one.
     DEBUG("Initializing the sine wave BDL entry...\n");
-    void *sine_entry = malloc(sizeof(ac97_bdl_entry)); // if this doesn't work, just do sizeof(uint64_t) for now
-    if (!sine_entry)
-    {
-        ERROR("Could not allocate sine wave BDL entry\n");
-        return -1;
-    }
-    memset(sine_entry, 0, sizeof(ac97_bdl_entry));
+    ac97_bdl_entry sine_entry;
+    sine_entry.addr = sine_buf;
+    sine_entry.n_entries = buf_len; 
+    sine_entry.last = 1; // Notes that this is the last entry in the list
+    sine_entry.ioc = 0;
 
-    // sine_entry = (struct ac97_bdl_entry *)sine_entry;
-    ((ac97_bdl_entry *)sine_entry)->addr = sine_buf;
-    ((ac97_bdl_entry *)sine_entry)->n_entries = buf_len;
-
-    // Set reset bit of output channel
-    // TODO: This code is janky. I should just write 0x2 to ioport_start_bar1+AC97_NABM_OUT_BOX+AC97_REG_BOX_CTRL,
-    //       but I'm not sure how to write fewer than 16 bits at a time using the functions from pci.c.
-
-    //using transfer control struct here
+    /* 
+    Step 3) Set reset bit of output channel and wait for card to clear it 
+    */
+    DEBUG("Setting reset bit of output box...\n");
     uint8_t tc_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc = (transfer_control_t) tc_int;
     tc.reset = 1;
-    DEBUG("Setting reset bit of output box...\n");
-    outb(tc.val,dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    outb(tc.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+
+    // Wait for device to clear the reset bit
+    while(true) 
+    {
+        uint8_t tc_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc = (transfer_control_t)tc_int;
+        if (tc.reset == 0) break;
+        else nk_sleep(100000000); // 100 ms
+    }
+    DEBUG("Device has cleared the reset bit...\n");
+
+    /* 
+    Step 4) Write physical position of BDL to output NABM register 
+    */
+
+    uint32_t og_bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("Original output box BDL base address: %d\n", og_bdl_pmio_addr);
 
     // Write phyiscal position of BDL to the output box
-    //
-    DEBUG("Telling device where the BDL is located...\n");
-    outl(sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("Telling device that the BDL is located at %d...\n", &sine_entry);
+    outl(&sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+
+    /*
+    According to this manual: https://www.intel.com/Assets/PDF/manual/252751.pdf
+    Only the last bit of the buffer pointer must be 0. This is to ensure samples never straddle
+    DWord boundaries. I think this means that we don't need to do any manipulation of the addresses
+    as we write them, since won't they always be even to align the structs anyways? 
+
+    DEBUG("SANITY CHECK: Asking device where the BDL is located...\n");
+    uint32_t bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("BDL is at: %d\n", bdl_pmio_addr >> 3); // First three bits are Read-Only... how do we write an address of 29 bits?
+    */
 
     // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
     //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
     //       because I don't know how to write fewer than 16 bits at a time.
 
-    //grabbing struct, setting relevent field, rewriting
+    /*
+    STEP 5) Write number of last valid buffer entry to NABM register 
+    */
+    // grabbing struct, setting relevent field, rewriting
     uint8_t lve_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
     last_valid_entry_t lve = (last_valid_entry_t) lve_int;
-    lve.last_entry = 1;
-    DEBUG("Writing number of last valid buffer entry...\n");
+    lve.last_entry = 1; 
+    DEBUG("Telling the device there is only one buffer entry...\n");
     outb(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
 
-    // Set bit for transferring data in the output box
-    // TODO: This is janky, it is setting the next processed buffer entry alongside setting the transfer bit
+    /*
+    STEP 6) Set bit to activate transfer of data
+    */
+    // grabbing struct, setting relevant field, rewriting
     uint8_t tc_int_td = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc_td = (transfer_control_t) tc_int;
     tc_td.dma_control = 1;
+    // Turn off all interrupts for now
+    tc_td.lbe_interrupt = 0;
+    tc_td.ioc_interrupt = 0;
+    tc_td.fifo_interrupt = 0;
+
     DEBUG("Setting bit to transfer data...\n");
     outb(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
 
@@ -1746,10 +1809,9 @@ int ac97_dirty_sound()
     DEBUG("Sleeping for 5s...\n");
     nk_sleep(5000000000); 
 
-    /* Free buffer and BDL entry that we just allocated */
-    DEBUG("Freeing buffer and BDL entry...\n");
+    /* Free buffer entry that we just allocated */
+    DEBUG("Freeing buffer entry from memory...\n");
     free(sine_buf);
-    free(sine_entry);
 
     return 0;
 }

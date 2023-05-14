@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "naut_string.h": "c",
+        "fs.h": "c",
+        "sstream": "c",
+        "ratio": "c",
+        "memory": "c",
+        "random": "c",
+        "optional": "c"
+    }
+}
