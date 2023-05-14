@@ -207,7 +207,7 @@ struct ac97_nabm_desc                  // describes native audio bus registers
 
 typedef union                      // describes an ac97 bdl entry
 {
-    uint64_t val;
+    uint64_t val; // uint32_t data[2] <-- should this be like the mouse_packet struct in ps2.c? 
     struct
     {
         uint32_t addr : 32;        // physical address to sound data in memory
@@ -339,17 +339,21 @@ typedef union
 
 static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
-    for (int i = 0, j = 0; i < buffer_len; i+=4, j++)
+    /*
+    According to https://alsa-project.org/files/pub/manuals/intel/29802801_801_AC97.pdf"
+    The samples are stored two per DWord (16-bit samples). In the case of audio PCM, these 
+    represent the left and right channels, respectively.
+    */
+    for (int i = 0, j = 0; i < buffer_len; i+=2, j++)
     {
         double x = (double) j * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
         double sin_val = sin(x);
         
-        buffer[i] = 0;
+        buffer[i] = (uint16_t) (sin_val * 127.0);
         buffer[i + 1] = (uint16_t) (sin_val * 127.0);
-        buffer[i + 2] = 0;
-        buffer[i + 3] = (uint16_t) (sin_val * 127.0);
     }
 }
+
 // accessor functions for device registers
 
 // static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
@@ -1754,10 +1758,15 @@ int ac97_dirty_sound()
     }
     DEBUG("Device has cleared the reset bit...\n");
 
-    /* 
-    Step 4) Write physical position of BDL to output NABM register 
-    */
+    /*
+    Step 4) Write physical position of BDL to output NABM register
 
+    According to https://alsa-project.org/files/pub/manuals/intel/29802801_801_AC97.pdf:
+    Set up the buffer descriptors and their corresponding buffers. Buffers are passed to the 
+    mini-port driver as Memory Descriptor Lists (MDL). These MDLs contain the physical page address 
+    of the virtual audio buffer. Multiple buffer descriptors may be required to represent a single 
+    virtual buffed passed to the mini-port driver. 
+    */
     uint32_t og_bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
     DEBUG("Original output box BDL base address: %d\n", og_bdl_pmio_addr);
 
@@ -1796,7 +1805,7 @@ int ac97_dirty_sound()
     // grabbing struct, setting relevant field, rewriting
     uint8_t tc_int_td = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc_td = (transfer_control_t) tc_int;
-    tc_td.dma_control = 1;
+    tc_td.dma_control = 0;
     // Turn off all interrupts for now
     tc_td.lbe_interrupt = 0;
     tc_td.ioc_interrupt = 0;
