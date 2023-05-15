@@ -8,6 +8,7 @@
         "random": "c",
         "optional": "c",
         "ac97_pci.h": "c",
-        "cpu.h": "c"
+        "cpu.h": "c",
+        "naut_types.h": "c"
     }
 }

@@ -55,6 +55,13 @@
 #define READ_MEM64(d, o) (*((volatile uint64_t *)((d)->mem_start + (o))))
 #define WRITE_MEM64(d, o, v) ((*((volatile uint64_t *)(((d)->mem_start) + (o)))) = (v))
 
+#define INB(port) ({uint8_t _x = inb(port); DEBUG("INB returned %x from port %x\n", _x, port); _x;})
+#define INW(port) ({uint16_t _x = inw(port); DEBUG("INW returned %x from port %x\n", _x, port); _x;})
+#define INL(port) ({uint32_t _x = inl(port); DEBUG("INL returned %x from port %x\n", _x, port); _x;})
+#define OUTB(val, port) ({outb(val, port); DEBUG("OUTB placed %x at port %x\n", val, port);})
+#define OUTW(val, port) ({outw(val, port); DEBUG("OUTW placed %x at port %x\n", val, port);})
+#define OUTL(val, port) ({outl(val, port); DEBUG("OUTL placed %x at port %x\n", val, port); })
+
 /* We may need to add some definitions like these for the AC97... come back later and 
    re-examine the code between this comment and the next SECTION DONE line. */
 
@@ -369,7 +376,7 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 
 // accessor functions for device registers
 
-// static inline uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
+// static INLine uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
 // {
 //     uint32_t result;
 //     if (dev->method == MEMORY)
@@ -379,13 +386,13 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         result = inl(dev->ioport_start + offset);
+//         result = INL(dev->ioport_start + offset);
 //     }
 //     DEBUG_REGS("readl %08x returns %08x\n", offset, result);
 //     return result;
 // }
 
-// static inline uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
+// static INLine uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
 // {
 //     uint16_t result;
 //     if (dev->method == MEMORY)
@@ -395,13 +402,13 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         result = inw(dev->ioport_start + offset);
+//         result = INW(dev->ioport_start + offset);
 //     }
 //     DEBUG_REGS("readw %08x returns %04x\n", offset, result);
 //     return result;
 // }
 
-// static inline uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
+// static INLine uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
 // {
 //     uint8_t result;
 //     if (dev->method == MEMORY)
@@ -411,13 +418,13 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         result = inb(dev->ioport_start + offset);
+//         result = INB(dev->ioport_start + offset);
 //     }
 //     DEBUG_REGS("readb %08x returns %02x\n", offset, result);
 //     return result;
 // }
 
-// static inline void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
+// static INLine void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
 // {
 //     DEBUG_REGS("writel %08x with %08x\n", offset, data);
 //     if (dev->method == MEMORY)
@@ -427,11 +434,11 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         outl(data, dev->ioport_start + offset);
+//         OUTL(data, dev->ioport_start + offset);
 //     }
 // }
 
-// static inline void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
+// static INLine void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
 // {
 //     DEBUG_REGS("writew %08x with %04x\n", offset, data);
 //     if (dev->method == MEMORY)
@@ -441,11 +448,11 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         outw(data, dev->ioport_start + offset);
+//         OUTW(data, dev->ioport_start + offset);
 //     }
 // }
 
-// static inline void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
+// static INLine void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
 // {
 //     DEBUG_REGS("writeb %08x with %02x\n", offset, data);
 //     if (dev->method == MEMORY)
@@ -455,7 +462,7 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
 //     }
 //     else
 //     {
-//         outb(data, dev->ioport_start + offset);
+//         OUTB(data, dev->ioport_start + offset);
 //     }
 // }
 
@@ -1451,14 +1458,14 @@ int ac97_pci_init(struct naut_info *naut)
                 register what means how many channels it suport and if is 20 bit audio samples supported. Now is sound card ready to use."
                 */
                 
-                // TODO: Eventually we want to write 0x3 instead of 0x2 to enable interrupts
-		        outl(0x00000002, state->ioport_start_bar1 + AC97_NABM_CTRL);
+                // NOTE: Writing 0x2 disables interrupts, but still resets device
+		        OUTL(0x00000003, state->ioport_start_bar1 + AC97_NABM_CTRL);
 
                 // Write to NAM reset register to default the device
-		        outw(0x0001, state->ioport_start_bar0);
+		        OUTW(0x0001, state->ioport_start_bar0);
 
                 // Read card capabilities register
-                uint32_t stat_reg = inl(state->ioport_start_bar1 + AC97_NABM_STATUS);
+                uint32_t stat_reg = INL(state->ioport_start_bar1 + AC97_NABM_STATUS);
 
                 /* Isolate 20th and 21st bits to see how many channels this AC97 can support */
                 uint32_t channels_supported = (stat_reg & 0x00300000) >> 20; 
@@ -1479,6 +1486,20 @@ int ac97_pci_init(struct naut_info *naut)
                 //       calls an abstraction function like nk_sound_dev_get_available_sample_resolution()
 
                 DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", channels_supported, max_bit_samples);
+
+                /* Allow device to use DMA */
+                uint16_t old_cmd = pci_cfg_readw(bus->num, pdev->num, 0, 0x4);
+                DEBUG("Old PCI CMD: 0x%04x\n", old_cmd);
+
+                old_cmd |= 0x7; // make sure bus master is enabled
+                // old_cmd &= ~0x40; 
+
+                DEBUG("New PCI CMD: 0x%04x\n", old_cmd);
+
+                pci_cfg_writew(bus->num, pdev->num, 0, 0x4, old_cmd);
+
+                uint16_t stat = pci_cfg_readw(bus->num, pdev->num, 0, 0x6);
+                DEBUG("PCI STATUS: 0x%04x\n", stat);
 
                 /* Register this AC97 device */
                 list_add(&dev_list, &state->node);
@@ -1708,8 +1729,8 @@ int ac97_dirty_sound()
     Step 1) Set master volume and PCM output volume
     */
     DEBUG("Setting master and PCM output volumes...\n");
-    uint16_t vol_int_m = inw(dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
-    uint16_t vol_int_p = inw(dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
+    uint16_t vol_int_m = INW(dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
+    uint16_t vol_int_p = INW(dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
     m_volume_t master_vol = (m_volume_t) vol_int_m;
     pcm_volume_t pcm_vol = (pcm_volume_t) vol_int_p;
 
@@ -1723,8 +1744,8 @@ int ac97_dirty_sound()
     pcm_vol.r_volume = 16;
     pcm_vol.mute = 0; // Ensure the PCM volume is not mute
 
-    outw(master_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
-    outw(pcm_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
+    OUTW(master_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
+    OUTW(pcm_vol.val, dirty_state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
     /*
     Step 2) Load sound data to memory and describe it in Buffer Descriptor List
@@ -1738,8 +1759,8 @@ int ac97_dirty_sound()
     // sound data. An entry can only transfer up to 0xFFFE samples!
     uint16_t buf_len = 0xFFFE; // uint64_t buf_len = sampling_frequency * duration * 4;
 
-    uint16_t *sine_buf = (uint16_t *)kmem_malloc(buf_len); // Max had this as a uint8_t, I think it should be 16
-    DEBUG("Creating and filling an audio buffer with %d sine wave samples...\n", buf_len);
+    uint16_t *sine_buf = (uint16_t *)malloc(2*buf_len); // Max had this as a uint8_t, I think it should be 16
+    DEBUG("Creating and filling an audio buffer with %x sine wave samples %p...\n", buf_len, sine_buf);
     create_sine_wave(sine_buf, buf_len, tone_frequency, sampling_frequency);
 
     // Initialize the BDL
@@ -1747,24 +1768,24 @@ int ac97_dirty_sound()
     //         I think we can just describe a single entry and let the device know that it's the only one.
     DEBUG("Initializing the sine wave BDL entry...\n");
     ac97_bdl_entry sine_entry;
-    sine_entry.addr = sine_buf;
+    sine_entry.addr = (uint32_t) sine_buf; // NOTE: sine_buf must be less than 4GB
     sine_entry.n_entries = buf_len; 
-    sine_entry.last = 1; // Notes that this is the last entry in the list
-    sine_entry.ioc = 0;
+    sine_entry.last = 0; // Notes that this is the last entry in the list
+    sine_entry.ioc = 1;
 
     /* 
     Step 3) Set reset bit of output channel and wait for card to clear it 
     */
     DEBUG("Setting reset bit of output box...\n");
-    uint8_t tc_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    uint8_t tc_int = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc = (transfer_control_t) tc_int;
     tc.reset = 1;
-    outb(tc.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    OUTB(tc.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
 
     // Wait for device to clear the reset bit
     while(true) 
     {
-        uint8_t tc_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        uint8_t tc_int = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
         transfer_control_t tc = (transfer_control_t)tc_int;
         if (tc.reset == 0) break;
         else nk_sleep(100000000); // 100 ms
@@ -1773,26 +1794,16 @@ int ac97_dirty_sound()
 
     /*
     Step 4) Write physical position of BDL to output NABM register
-
-    According to https://alsa-project.org/files/pub/manuals/intel/29802801_801_AC97.pdf:
-    Set up the buffer descriptors and their corresponding buffers. Buffers are passed to the 
-    mini-port driver as Memory Descriptor Lists (MDL). These MDLs contain the physical page address 
-    of the virtual audio buffer. Multiple buffer descriptors may be required to represent a single 
-    virtual buffed passed to the mini-port driver. 
     */
-    uint32_t og_bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
-    DEBUG("Original output box BDL base address: %d\n", og_bdl_pmio_addr);
-
     // Write phyiscal position of BDL to the output box
-    DEBUG("Telling device that the BDL is located at %d...\n", &sine_entry);
-    outl(&sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("Telling device that the BDL is located at %x...\n", &sine_entry);
+    OUTL((uint32_t) &sine_entry, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
 
     // First bit is read-only, and 0. I think this is for the sake of alignment of addresses.
-    // Regardless, I don't think we'll ever be passed an odd address from malloc, but just in 
-    // case, I want to add this debug to ensure our write to the DMA is consistent. 
+    // How do we enure a kmem_malloc'd address is always even? 
     DEBUG("SANITY CHECK: Asking device where the BDL is located...\n");
-    uint32_t bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
-    DEBUG("BDL is at: %d\n", bdl_pmio_addr); // First bit is Read-Only... how do we write an address of 29 bits?
+    uint32_t bdl_pmio_addr = INL(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    DEBUG("BDL is at: %x\n", bdl_pmio_addr); // First bit is Read-Only... how do we write an address of 31 bits?
 
     /*
     According to this manual: https://www.intel.com/Assets/PDF/manual/252751.pdf
@@ -1805,39 +1816,55 @@ int ac97_dirty_sound()
     STEP 5) Write number of last valid buffer entry to NABM register 
     */
     // grabbing struct, setting relevent field, rewriting
-    uint8_t lve_int = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+    uint8_t lve_int = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
     last_valid_entry_t lve = (last_valid_entry_t) lve_int;
-    lve.last_entry = 1; 
+    lve.last_entry = 1; // Should this denote the last entry, or (last_entry + 1)? 
     DEBUG("Telling the device there is only one buffer entry...\n");
-    outb(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+    OUTB(lve.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
 
     /*
     STEP 6) Set bit to activate transfer of data
     */
     // grabbing struct, setting relevant field, rewriting
-    uint8_t tc_int_td = inb(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    uint8_t tc_int_td = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
     transfer_control_t tc_td = (transfer_control_t) tc_int;
     tc_td.dma_control = 1;
-    // Turn off all interrupts for now
-    tc_td.lbe_interrupt = 0;
-    tc_td.ioc_interrupt = 0;
-    tc_td.fifo_interrupt = 0;
+    // Turn on all interrupts for now
+    tc_td.lbe_interrupt = 1;
+    tc_td.ioc_interrupt = 1;
+    tc_td.fifo_interrupt = 1;
 
     DEBUG("Setting bit to transfer data...\n");
-    outb(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    OUTB(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
 
     /* Check transfer status register to ensure DMA controller status is active */
-    uint16_t trans_status = inw(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+    uint16_t trans_status = INW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     transfer_status_t tr_stat = (transfer_status_t) trans_status;
     if (tr_stat.dma_status == 1) DEBUG("DMA is halted for some reason...\n");
     else DEBUG("DMA has begun transferring data...\n");
 
+    /* 
+    STEP 7) Play sound (the device DMA should handle this automatically).
+            Include any necessary debugging statements here. 
+    */
+    uint8_t current_entry = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
+    DEBUG("Currently processing entry %d\n", current_entry);
+    uint8_t next_entry = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_NEXT);
+    DEBUG("Next entry to process: %d\n", next_entry);
+
     /* Continuously check transfer status register and wait until the buffer is consumed */
     while(true) {
-        uint16_t trans_status = inw(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
-        transfer_status_t tr_stat = (transfer_status_t)trans_status;
+        uint16_t trans_status = INW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+        transfer_status_t tr_stat = (transfer_status_t) trans_status;
+
+        OUTW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS, 0x1C); // Clear interrupt from status reg
+        
         if (tr_stat.end_of_transfer == 1) break;
-        else nk_sleep(100000000); // 100 ms
+        else {
+            uint16_t read_pointer = INW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+            DEBUG("%d samples have been transferred so far\n", read_pointer); 
+            nk_sleep(100000000); // 100 ms
+        }
     }
 
     /* Put Nautilus to sleep for 5s while the audio is hopefully played. Afterwards, free the buffer. */
@@ -1846,7 +1873,7 @@ int ac97_dirty_sound()
 
     /* Free buffer entry that we just allocated */
     DEBUG("Freeing buffer entry from memory...\n");
-    kmem_free(sine_buf);
+    free(sine_buf);
 
     return 0;
 }
