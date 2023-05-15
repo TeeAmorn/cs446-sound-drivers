@@ -1832,9 +1832,17 @@ int ac97_dirty_sound()
     if (tr_stat.dma_status == 1) DEBUG("DMA is halted for some reason...\n");
     else DEBUG("DMA has begun transferring data...\n");
 
+    /* Continuously check transfer status register and wait until the buffer is consumed */
+    while(true) {
+        uint16_t trans_status = inw(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+        transfer_status_t tr_stat = (transfer_status_t)trans_status;
+        if (tr_stat.end_of_transfer == 1) break;
+        else nk_sleep(100000000); // 100 ms
+    }
+
     /* Put Nautilus to sleep for 5s while the audio is hopefully played. Afterwards, free the buffer. */
-    DEBUG("Sleeping for 5s...\n");
-    nk_sleep(5000000000); 
+    //DEBUG("Sleeping for 5s...\n");
+    //nk_sleep(5000000000); 
 
     /* Free buffer entry that we just allocated */
     DEBUG("Freeing buffer entry from memory...\n");
