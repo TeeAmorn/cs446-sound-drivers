@@ -335,7 +335,20 @@ typedef union
     } __attribute__((packed)) ;
 } __attribute__((packed)) transfer_control_t;
 
-
+// transfer status data structure
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t dma_status      : 1;  // dma transfer status
+        uint8_t end_of_transfer : 1;  // is current entry equal to last valid entry?
+        uint8_t lbe_interrupt   : 1;  // last buffer entry interrupt fired
+        uint8_t ioc_interrupt   : 1;  // ioc interrupt fired
+        uint8_t fifo_interrupt  : 1;  // fifo interrupt fired
+        uint16_t rvsd : 11;           // reserved
+    } __attribute__((packed));
+} __attribute__((packed)) transfer_status_t;
 
 static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
@@ -1439,13 +1452,13 @@ int ac97_pci_init(struct naut_info *naut)
                 */
                 
                 // TODO: Eventually we want to write 0x3 instead of 0x2 to enable interrupts
-		        outw(0x2, state->ioport_start_bar1 + AC97_NABM_CTRL);
+		        outl(0x00000002, state->ioport_start_bar1 + AC97_NABM_CTRL);
 
                 // Write to NAM reset register to default the device
-		        outw(0x1, state->ioport_start_bar0);
+		        outw(0x0001, state->ioport_start_bar0);
 
                 // Read card capabilities register
-                uint32_t stat_reg = inw(state->ioport_start_bar1 + AC97_NABM_STATUS);
+                uint32_t stat_reg = inl(state->ioport_start_bar1 + AC97_NABM_STATUS);
 
                 /* Isolate 20th and 21st bits to see how many channels this AC97 can support */
                 uint32_t channels_supported = (stat_reg & 0x00300000) >> 20; 
@@ -1717,9 +1730,9 @@ int ac97_dirty_sound()
     Step 2) Load sound data to memory and describe it in Buffer Descriptor List
     */
     // Create an audio buffer and fill it with sine wave samples
-    uint32_t sampling_frequency = 44100;
+    uint64_t sampling_frequency = 44100;
     uint32_t duration = 1;
-    uint32_t tone_frequency = 261; // middle C
+    uint64_t tone_frequency = 261; // middle C
 
     // With the parameters above, we'd actually need to create multiple BDL entries to store the
     // sound data. An entry can only transfer up to 0xFFFE samples!
@@ -1779,7 +1792,7 @@ int ac97_dirty_sound()
     // case, I want to add this debug to ensure our write to the DMA is consistent. 
     DEBUG("SANITY CHECK: Asking device where the BDL is located...\n");
     uint32_t bdl_pmio_addr = inl(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
-    DEBUG("BDL is at: %d\n", bdl_pmio_addr); // First bits is Read-Only... how do we write an address of 29 bits?
+    DEBUG("BDL is at: %d\n", bdl_pmio_addr); // First bit is Read-Only... how do we write an address of 29 bits?
 
     /*
     According to this manual: https://www.intel.com/Assets/PDF/manual/252751.pdf
@@ -1787,10 +1800,6 @@ int ac97_dirty_sound()
     DWord boundaries. I think this means that we don't need to do any manipulation of the addresses
     as we write them, since won't they always be even to align the structs anyways? 
     */
-
-    // TODO: If this should be kept, it should be made less janky for the same reason the reset-bit code is janky.
-    //       The OSDev page says to write the number of the last valid buffer entry to output box, but this code also sets the APE
-    //       because I don't know how to write fewer than 16 bits at a time.
 
     /*
     STEP 5) Write number of last valid buffer entry to NABM register 
@@ -1816,6 +1825,12 @@ int ac97_dirty_sound()
 
     DEBUG("Setting bit to transfer data...\n");
     outb(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+
+    /* Check transfer status register to ensure DMA controller status is active */
+    uint16_t trans_status = inw(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+    transfer_status_t tr_stat = (transfer_status_t) trans_status;
+    if (tr_stat.dma_status == 1) DEBUG("DMA is halted for some reason...\n");
+    else DEBUG("DMA has begun transferring data...\n");
 
     /* Put Nautilus to sleep for 5s while the audio is hopefully played. Afterwards, free the buffer. */
     DEBUG("Sleeping for 5s...\n");

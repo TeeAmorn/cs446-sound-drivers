@@ -1,0 +1,1 @@
+qemu-system-x86_64 -s -vga std -smp 2 -m 2048 -chardev socket,host=localhost,port=5000,id=g,server=on -device isa-serial,chardev=g -chardev stdio,id=d -device isa-serial,chardev=d -cdrom nautilus.iso

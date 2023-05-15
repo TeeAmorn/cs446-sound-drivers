@@ -6,6 +6,8 @@
         "ratio": "c",
         "memory": "c",
         "random": "c",
-        "optional": "c"
+        "optional": "c",
+        "ac97_pci.h": "c",
+        "cpu.h": "c"
     }
 }
