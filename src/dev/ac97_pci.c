@@ -268,6 +268,7 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     uint32_t bus_num;
     uint32_t pdev_num;
 
+    int intr_vec; // TODO: 
 
     // TODO: What else do we need to add? 
 };
@@ -1320,7 +1321,20 @@ static struct nk_sound_dev_int ops = {
     .get_stream_params = NULL, //TODO: implement function
 };
 
-int ac97_pci_init(struct naut_info *naut)
+static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
+{
+    DEBUG("Interrupt handler caught %x\n", vector);
+    struct ac97_state *state = (struct ac97_state*) priv_data;
+    uint16_t trans_status = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+    transfer_status_t tr_stat = (transfer_status_t)trans_status;
+
+    DEBUG("Transfer status regisster contents: %x\n", tr_stat.val);
+
+    IRQ_HANDLER_END(); // Lets APIC know interrupt is over
+    return 0;
+}
+
+    int ac97_pci_init(struct naut_info *naut)
 {
     struct pci_info *pci = naut->sys.pci;
     struct list_head *curbus, *curdev;
@@ -1500,6 +1514,24 @@ int ac97_pci_init(struct naut_info *naut)
 
                 uint16_t stat = pci_cfg_readw(bus->num, pdev->num, 0, 0x6);
                 DEBUG("PCI STATUS: 0x%04x\n", stat);
+
+                /* Create interrupt vector for AC97 */
+                // PCI Interrupt (A..D)
+                // state->pci_intr = cfg->dev_cfg.intr_pin;
+
+                // GRUESOME HACK
+                // state->intr_vec = map_pci_irq_to_vec(bus, pdev);
+                /* Enable these wires to register possible interrupts */
+                nk_unmask_irq(11);
+                nk_unmask_irq(12);
+                nk_unmask_irq(13);
+                nk_unmask_irq(14);
+                nk_unmask_irq(15);
+                nk_unmask_irq(8);
+                nk_unmask_irq(9);
+                nk_unmask_irq(10);
+
+                register_int_handler(0xe4, handler, state);
 
                 /* Register this AC97 device */
                 list_add(&dev_list, &state->node);
@@ -1854,11 +1886,12 @@ int ac97_dirty_sound()
 
     /* Continuously check transfer status register and wait until the buffer is consumed */
     while(true) {
+        // TODO: Why does the device think no samples have been transferred, even if sound is being played? 
         uint16_t trans_status = INW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
         transfer_status_t tr_stat = (transfer_status_t) trans_status;
 
         OUTW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS, 0x1C); // Clear interrupt from status reg
-        
+
         if (tr_stat.end_of_transfer == 1) break;
         else {
             uint16_t read_pointer = INW(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
