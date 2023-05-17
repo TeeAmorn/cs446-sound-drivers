@@ -9,6 +9,11 @@
         "optional": "c",
         "ac97_pci.h": "c",
         "cpu.h": "c",
-        "naut_types.h": "c"
+        "naut_types.h": "c",
+        "chrono": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "utility": "c"
     }
 }
