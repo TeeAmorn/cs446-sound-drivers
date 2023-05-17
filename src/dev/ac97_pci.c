@@ -358,6 +358,30 @@ typedef union
     } __attribute__((packed));
 } __attribute__((packed)) transfer_status_t;
 
+
+double new_sin(double x){
+    x = x * 180 / M_PI;
+
+    while(x < 0){
+        x += 360;
+    }
+
+    while(x > 180){
+        x -= 360;
+    }
+
+    double neg = 1;
+
+    if(x < 0)
+    {
+        x = -x;
+        neg = -1;
+    }
+
+    double sin_val = neg * 4 * x * (180 - x) / (40500 - x * (180 - x));
+
+    return sin_val;
+}
 static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
     /*
@@ -365,15 +389,16 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
     The samples are stored two per DWord (16-bit samples). In the case of audio PCM, these 
     represent the left and right channels, respectively.
     */
-    for (int i = 0, j = 0; i < buffer_len; i+=2, j++)
+    for (int i = 0; i < buffer_len; i+=2)
     {
-        double x = (double) j * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
-        double sin_val = sin(x);
-        
-        buffer[i] = (uint16_t) (sin_val * 127.0);
-        buffer[i + 1] = (uint16_t) (sin_val * 127.0);
+       double x = (double) i * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
+       double sin_val = new_sin(x);
+        buffer[i] = (uint16_t) (sin_val * 5000.0);
+        buffer[i+1] = (uint16_t) (sin_val * 5000.0);
     }
 }
+
+
 
 // accessor functions for device registers
 
@@ -1766,9 +1791,10 @@ int ac97_dirty_sound()
     m_volume_t master_vol = (m_volume_t) vol_int_m;
     pcm_volume_t pcm_vol = (pcm_volume_t) vol_int_p;
 
-    // Master volume is stepped from 0-63. Using 32 because it is somewhere in the middle (arbitrary)
-    master_vol.l_volume = 32;
-    master_vol.r_volume = 32;
+    // Master volume is stepped from 0-63. Using 50 because it is somewhere in the middle (arbitrary)
+    //if sound is clipping, increase this volume
+    master_vol.l_volume = 50;
+    master_vol.r_volume = 50;
     master_vol.mute = 0; // Ensure the master volume is not mute
 
     // PCM Output volume is stepped from 0-31. Using 16 because it is somewhere in the middle (arbitrary)
@@ -1783,7 +1809,7 @@ int ac97_dirty_sound()
     Step 2) Load sound data to memory and describe it in Buffer Descriptor List
     */
     // Create an audio buffer and fill it with sine wave samples
-    uint64_t sampling_frequency = 44100;
+    uint64_t sampling_frequency = 48000;
     uint32_t duration = 1;
     uint64_t tone_frequency = 261; // middle C
 
