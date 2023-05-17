@@ -392,8 +392,8 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
     */
     for (int i = 0; i < buffer_len; i+=2)
     {
-       double x = (double) i * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
-       double sin_val = new_sin(x);
+        double x = (double) i * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
+        double sin_val = new_sin(x);
         buffer[i] = (uint16_t) (sin_val * 5000.0);
         buffer[i+1] = (uint16_t) (sin_val * 5000.0);
     }
