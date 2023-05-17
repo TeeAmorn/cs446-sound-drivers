@@ -359,6 +359,30 @@ typedef union
     } __attribute__((packed));
 } __attribute__((packed)) transfer_status_t;
 
+
+double new_sin(double x){
+    x = x * 180 / M_PI;
+
+    while(x < 0){
+        x += 360;
+    }
+
+    while(x > 180){
+        x -= 360;
+    }
+
+    double neg = 1;
+
+    if(x < 0)
+    {
+        x = -x;
+        neg = -1;
+    }
+
+    double sin_val = neg * 4 * x * (180 - x) / (40500 - x * (180 - x));
+
+    return sin_val;
+}
 static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
     /*
@@ -366,15 +390,16 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
     The samples are stored two per DWord (16-bit samples). In the case of audio PCM, these 
     represent the left and right channels, respectively.
     */
-    for (int i = 0, j = 0; i < buffer_len; i+=2, j++)
+    for (int i = 0; i < buffer_len; i+=2)
     {
-        double x = (double) j * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
-        double sin_val = sin(x);
-        
-        buffer[i] = (uint16_t) (sin_val * 127.0);
-        buffer[i + 1] = (uint16_t) (sin_val * 127.0);
+       double x = (double) i * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
+       double sin_val = new_sin(x);
+        buffer[i] = (uint16_t) (sin_val * 5000.0);
+        buffer[i+1] = (uint16_t) (sin_val * 5000.0);
     }
 }
+
+
 
 // accessor functions for device registers
 
