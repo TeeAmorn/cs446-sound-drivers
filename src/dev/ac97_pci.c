@@ -1390,7 +1390,7 @@ int ac97_init_output_bdl(struct ac97_state* state) {
     */
     // Write phyiscal position of BDL to the output box
     DEBUG("Telling device that the BDL is located at %x...\n", OUT_RING);
-    OUTL((uint32_t)&OUT_RING, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    OUTL((uint32_t)OUT_RING, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
 
     return 0; // indicate success
 }
