@@ -1481,8 +1481,9 @@ int ac97_consume_out_buffer(struct ac97_state *state)
 
     /* Ask the device what the current processed entry is. Error if we are misaligned. */
     // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety 
+    // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
     uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
-    if (((last_valid_entry_t) curr_entry).last_entry != OUT_HEAD) {
+    if (((last_valid_entry_t) curr_entry).last_entry != BDL_INC(OUT_HEAD, 1)) {
         // The if check above is weird, but the last_valid_entry register has the same structure 
         // as the actual_processed_entry register, so I'm just taking advantage of the existing struct
         ERROR("State variable is not consistent with device!\n");
@@ -1492,12 +1493,17 @@ int ac97_consume_out_buffer(struct ac97_state *state)
     /* Ask the device how many samples it has transferred from the current processed entry. 
        Error if we are somehow consuming the buffer before all samples have been transferred.
     */
+    /* 
+    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
+          how many samples have been transferred from the APE, or if we're doing something incorrectly.
+
     uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
     if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
     {
         ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
         return -1;
     }
+    */
 
     /* Free the contents of the consumed buffer, then reset the buffer entry */
     uint8_t free_pos = OUT_HEAD;
