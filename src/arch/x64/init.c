@@ -72,6 +72,8 @@
 #include <nautilus/cmdline.h>
 #include <test/test.h>
 
+char *script[] = {"create_bdl", "add_sound_buffers 10 261", "consume_sound_buffers", 0}; // TODO: remove this script eventually
+
 #ifdef NAUT_CONFIG_ASPACES
 #include <nautilus/aspace.h>
 #endif
@@ -118,7 +120,7 @@
 #ifdef NAUT_CONFIG_E1000E_PCI
 #include <dev/e1000e_pci.h>
 #endif
-//TODO: TEMP
+// TODO: TEMP
 #include <dev/ac97_pci.h>
 #ifdef NAUT_CONFIG_RAMDISK
 #include <dev/ramdisk.h>
@@ -192,9 +194,6 @@ struct nk_sched_config sched_cfg = {
     .aperiodic_quantum = QUANTUM_IN_NS,
     .aperiodic_default_priority = QUANTUM_IN_NS,
 };
-
-
-
 
 static int 
 sysinfo_init (struct sys_info * sys)
@@ -583,8 +582,8 @@ init (unsigned long mbd,
 #ifdef NAUT_CONFIG_WATCHDOG
     nk_watchdog_init(NAUT_CONFIG_WATCHDOG_DEFAULT_TIME_MS * 1000000UL);
 #endif
-    
-    nk_launch_shell("root-shell",0,0,0);
+
+    nk_launch_shell("root-shell",0,script,0); // replace 'script' with 0 eventually
 
     runtime_init();
 

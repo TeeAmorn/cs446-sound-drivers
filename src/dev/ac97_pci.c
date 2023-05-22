@@ -102,8 +102,6 @@
 #define MIC_ENTRY_LAST(i) (((ac97_bdl_entry *)MIC_RING)[(i)].last) // flags to fire an interrupt signaling that this is the last entry in buffer
 #define MIC_ENTRY_IOC(i) (((ac97_bdl_entry *)MIC_RING)[(i)].ioc)   // flags to fire an interrupt when this buffer is fully consumed
 
-/* SECTION DONE */
-
 /* Not sure what constant variables are necessary for the AC97... come back later and 
    re-examine the code between this comment and the next SECTION DONE line */
 
@@ -233,28 +231,34 @@ typedef union
 
 struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an ac97_state? 
 {
-    // a pointer to the base class
+    // pointer to base class
     struct nk_sound_dev *sounddev;
 
-    // pci interrupt vector
-    struct pci_dev *pci_dev;
+    // pci interrupt and interrupt vector
+    struct pci_dev *pci_dev;       
+    uint8_t pci_intr;              // IRQ number on bus
+    uint8_t intr_vec;              // IRQ we will see (found through a hack to be 0xe4)
 
     // our device list
-    struct list_head node;
+    struct list_head ac97_node;
+
+    // where registers are mapped into the I/0 address space
+    uint16_t ioport_start_bar0;
+    uint16_t ioport_end_bar0;
+    uint16_t ioport_start_bar1;
+    uint16_t ioport_end_bar1;
+
+    // where registers are mapped into the physical memory space
+    // TODO: The AC97 uses PMIO by default, so these are unused. Should we keep both sets
+    //       of register mapping parameters in case the user wants to use MMIO?
+    uint64_t mem_start;
+    uint64_t mem_end; 
 
     // The following hide the details of the PCI BARs, since
     // we only have one block of registers
     enum { NONE, IO, MEMORY}  method;
 
-
-    // Where registers are mapped into the I/O address space
-    uint16_t ioport_start_bar0;
-    uint16_t ioport_end_bar0; // Can we delete the end? 
-    
-    uint16_t ioport_start_bar1;
-    uint16_t ioport_end_bar1; // Can we delete the end? 
-
-
+    // Device name uponr registration in Nautilus
     char name[DEV_NAME_LEN];
 
     // The AC97 maintains three Buffer Descriptor Lists for PCM IN, PCM OUT, and Microphone
@@ -262,13 +266,14 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     struct ac97_bdl_desc *bdl_out_desc;
     struct ac97_bdl_desc *bdl_mic_desc;
 
-    // TODO: What else do we need to add? 
+    // TODO: What else do we need to add?
+    // We will need to track the parameters of the stream, once we get to that point
 };
 
-/* ac97_desc_ring stores ac_97_entry_desc objects */
+/* ac97_desc_ring stores ac97_bdl_entry objects */
 struct ac97_bdl_desc
 {
-    void *bdl_ring;   // pointer to physical buffer
+    void *bdl_ring;   // pointer to physical ring buffer of ac97_bdl_entry objects
     uint8_t head_pos; // index to current head of ring
     uint8_t tail_pos; // index to current tail of ring
     uint8_t size;     // effective size of ring (number of ac97_bdl_entry objects)
@@ -280,7 +285,7 @@ typedef union // describes an ac97 bdl entry
     struct
     {
         uint32_t addr : 32;      // physical address to sound data in memory
-        uint16_t size : 16; // number of samples in the buffer this entry describes
+        uint16_t size : 16;      // number of samples in the buffer this entry describes
         uint16_t rsvd : 14;      // reserved
         uint8_t last : 1;        // flags last entry of buffer, stop playing
         uint8_t ioc : 1;         // interrupt fired when data from this entry is transferred
@@ -675,18 +680,22 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     DEBUG("Interrupt handler caught %x\n", vector);
     struct ac97_state *state = (struct ac97_state*) priv_data;
 
+    /* Pause device 
+    DEBUG("Pausing device while we handle the interrupt...\n");
+    uint8_t tc_int_td = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    transfer_control_t tc_td = (transfer_control_t)tc_int_td;
+    tc_td.dma_control = 0;
+    OUTB(tc_td.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL); */
+
     /* Track Transfer Status register in a struct so we can handle the interrupt the device raised */
     uint16_t trans_status = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     transfer_status_t tr_stat = (transfer_status_t)trans_status;
     DEBUG("Transfer status register contents: %x\n", tr_stat.val);
 
-    /* This would be strange behavior */
+    /* Should the device halt when it sends an interrupt? */
     if (tr_stat.dma_status == 0) ERROR("Device is not halted, but we're handling an interrupt!\n");
     
-    /* 
-       Handle the interrupt based on the contents of the Transfer Status register. The last step of every if
-       block must be to write 0x1C, which writes 1s to each interrupt register to clear them. 
-    */
+    /* Handle the interrupt internally based on the contents of the Transfer Status register. */
     // TODO: We may want to handle different interrupts differently. Implement this.
     // TODO: When multiple NABM registers are being used (e.g. sound is being played and recorded), 
     //       we'll need to clear the interrupt from the correct box. So far, this code assumes interrupts
@@ -694,23 +703,35 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     if (tr_stat.lbe_interrupt == 1) {
         DEBUG("Handling last buffer entry interrupt...\n");
         ac97_deinit_output_bdl(state);
-        OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else if (tr_stat.ioc_interrupt == 1) {
         DEBUG("Handling ioc interrupt from a consumed buffer...\n");
         ac97_consume_out_buffer(state);
-        OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else if (tr_stat.fifo_interrupt == 1) {
         DEBUG("Handling fifo error interrupt...\n");
-        OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else {
         ERROR("Transfer status register does not indicate a known interrupt\n");
-        return -1;
+        return -1;  
     }
 
+    DEBUG("Interrupt has been handled, clearing device register...\n");
+    OUTW(0x001C, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+
+    /* After we handle the interrupt internally, tell the CPU and then clear the device */
+    DEBUG("Telling APIC to move on from this interrupt...\n");
     IRQ_HANDLER_END(); // Lets APIC know interrupt is over
+
+    /* Resume device 
+    DEBUG("Resuming device since the interrupt is handled...\n");
+    tc_int_td = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    tc_td = (transfer_control_t) tc_int_td;
+    tc_td.dma_control = 1;
+    OUTB(tc_td.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL); */
 
     return 0;
 }
@@ -848,7 +869,6 @@ int ac97_pci_init(struct naut_info *naut)
                 NAM reset register to set all NAM register to their defaults. After this, you can read card capability info from Global Status 
                 register what means how many channels it suport and if is 20 bit audio samples supported. Now is sound card ready to use."
                 */
-                
                 // NOTE: Writing 0x2 disables interrupts, but still resets device
 		        OUTL(0x00000003, state->ioport_start_bar1 + AC97_NABM_CTRL);
 
@@ -910,7 +930,7 @@ int ac97_pci_init(struct naut_info *naut)
                 register_int_handler(0xe4, handler, state); // AC97 raises the 0xE4 interrupt vector (found via trial-and-error)
 
                 /* Register this AC97 device */
-                list_add(&dev_list, &state->node);
+                list_add(&dev_list, &state->ac97_node);
                 sprintf(state->name, "ac97-%d", num);
                 num++;
 
@@ -1487,6 +1507,7 @@ int ac97_consume_out_buffer(struct ac97_state *state)
     /* Ask the device what the current processed entry is. Error if we are misaligned. */
     // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety 
     // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
+    DEBUG("Asking the device for the value of the APE...\n");
     uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
     if (((last_valid_entry_t) curr_entry).last_entry != BDL_INC(OUT_HEAD, 1)) {
         // The if check above is weird, but the last_valid_entry register has the same structure 
@@ -1511,8 +1532,9 @@ int ac97_consume_out_buffer(struct ac97_state *state)
     */
 
     /* Free the contents of the consumed buffer, then reset the buffer entry */
+    // TODO: Perhaps the user space should be responsible for freeing the buffers
     uint8_t free_pos = OUT_HEAD;
-    free((void*) OUT_ENTRY_ADDR(free_pos)); // Should the driver be responsible for freeing buffers, or should the application clean them up? 
+    // free((void*) OUT_ENTRY_ADDR(free_pos)); // TODO: Should the driver be responsible for freeing buffers, or should the application clean them up? 
     OUT_ENTRY_ADDR(free_pos) = 0;
     OUT_ENTRY_SIZE(free_pos) = 0;
     OUT_ENTRY_LAST(free_pos) = 0;
@@ -1538,11 +1560,15 @@ static int handle_add_sound_buffers(char *buf, void *priv)
         // Create one huge sine buffer
         uint16_t buf_len = nbuf * 0xFFFE; // total number of samples
         uint16_t *sine_buf = (uint16_t *)malloc(2*buf_len); // each sample is 2 bytes
+        if (!sine_buf) {
+            nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
+            return 0;
+        }
         create_sine_wave(sine_buf, buf_len, freq, 44100); // TODO: pull sampling freq from device state
 
         // Chop the samples and have the AC97 add them
         for (int i = 0; i < nbuf; i++) {
-            ac97_produce_out_buffer(dirty_state, sine_buf + i * 0xFFFE, 0xFFFE);
+            ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0xFFFE), 0xFFFE);
         }
         return 0;
     }
@@ -1563,6 +1589,8 @@ static int handle_consume_sound_buffers(char *buf, void *priv)
     /*
     Activates the DMA of the AC97 so it can start playing sound data
     */
+    // print the BDL before we consume it
+    print_bdl_out(dirty_state);
 
     // grabbing struct, setting relevant field, rewriting
     uint8_t tc_int_td = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
@@ -1589,6 +1617,17 @@ int ac97_pci_deinit()
 {
     /* TODO: Call ac97_deinit_output_bdl */
     INFO("deinited and leaking\n");
+    return 0;
+}
+
+int print_bdl_out(struct ac97_state* state)
+{
+    DEBUG("Printing the contents of the PCM OUT BDL...\n");
+    for (int i=0; i<BDL_MAX_SIZE; i++) 
+    {
+        ac97_bdl_entry entry = OUT_ENTRY(i);
+        DEBUG("Entry %d: %016lx\n", i, entry.val);
+    }
     return 0;
 }
 
