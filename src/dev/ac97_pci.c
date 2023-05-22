@@ -655,12 +655,14 @@ static struct list_head dev_list;
 static struct ac97_state *dirty_state; 
 
 static struct nk_sound_dev_int ops = {
-    .get_avaiable_modes = NULL, //TODO: implement function
+    .get_available_sample_rates = NULL, //TODO: implement function
+    .get_available_sample_resolution = NULL, //TODO: implement function
+    .get_available_num_of_channels = NULL, //TODO: implement function
+    .get_available_scale = NULL, //TODO: implement function
     .open_stream = NULL, //TODO: implement function
-    .close_stream = NULL, //TODO: implement function
+    .close_stream = NULL, //TODO implement function
     .write_to_stream = NULL, //TODO: implement function
-    .read_from_stream = NULL, //TODO: implement function
-    .get_stream_params = NULL, //TODO implement function
+    .get_stream_params = NULL, //TODO: implement function
 };
 
 static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)

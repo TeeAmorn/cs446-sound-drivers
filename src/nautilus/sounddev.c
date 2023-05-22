@@ -83,17 +83,39 @@ struct nk_sound_dev *nk_sound_dev_find(char *name)
     }
 }
 
-int nk_sound_dev_get_avaiable_modes(struct nk_sound_dev *dev, struct nk_sound_dev_params params[]) {
-    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
-    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->get_avaiable_modes(d->state, params); 
-}
-
-struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, nk_sound_dev_stream_t stream_type, struct nk_sound_dev_params *params)
+int nk_sound_dev_get_available_sample_rates(struct nk_sound_dev *dev, uint32_t rates[])
 {
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-    return di->open_stream(d->state, stream_type, params);
+    return di->get_available_sample_rates(d->state, rates);
+}
+
+int nk_sound_dev_get_available_sample_resolution(struct nk_sound_dev *dev, uint8_t resolutions[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_sample_resolution(d->state, resolutions);
+}
+
+int nk_sound_dev_get_available_num_of_channels(struct nk_sound_dev *dev, uint8_t channels[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_num_of_channels(d->state, channels);
+}
+
+int nk_sound_dev_get_available_scale(struct nk_sound_dev *dev, uint32_t scales[])
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->get_available_scale(d->state, scales);
+}
+
+struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, struct nk_sound_dev_params *params)
+{
+    struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+    struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+    return di->open_stream(d->state, params);
 }
 
 int nk_sound_dev_close_stream(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream)
@@ -142,11 +164,6 @@ int nk_sound_dev_write_to_stream(struct nk_sound_dev *dev,
                                  void (*callback)(nk_sound_dev_status_t status, void *state),
                                  void *state)
 {
-    if (stream->type == NK_SOUND_DEV_INPUT_STREAM) {
-        DEBUG("write sound not possible, stream is of type NK_SOUND_DEV_INPUT_STREAM\n");
-        return -1;
-    }
-
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
     DEBUG("write sound on %s (len=%lu, type=%lx)\n", d->name, len, type);
@@ -224,11 +241,6 @@ int nk_sound_dev_read_to_stream(struct nk_sound_dev *dev,
                                 void (*callback)(nk_sound_dev_status_t status, void *state),
                                 void *state)
 {
-    if (stream->type == NK_SOUND_DEV_OUTPUT_STREAM) {
-        DEBUG("write sound not possible, stream is of type NK_SOUND_DEV_OUTPUT_STREAM\n");
-        return -1;
-    }
-    
     struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
     struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
     DEBUG("read sound on %s (len=%lu, type=%lx)\n", d->name, len, type);
