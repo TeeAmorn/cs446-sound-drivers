@@ -72,7 +72,7 @@
 #include <nautilus/cmdline.h>
 #include <test/test.h>
 
-char *script[] = {"create_bdl", "add_sound_buffers 10 261", "consume_sound_buffers", 0}; // TODO: remove this script eventually
+char *script[] = {"create_bdl", "add_sound_buffers 16 261", "add_sound_buffers 16 522", "consume_sound_buffers", 0}; // TODO: remove this script eventually
 
 #ifdef NAUT_CONFIG_ASPACES
 #include <nautilus/aspace.h>

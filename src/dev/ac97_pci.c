@@ -388,7 +388,8 @@ double new_sin(double x){
 
     return sin_val;
 }
-static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
+
+static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t tone_frequency, uint64_t sampling_frequency)
 {
     /*
     According to https://alsa-project.org/files/pub/manuals/intel/29802801_801_AC97.pdf"
@@ -725,6 +726,9 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     /* After we handle the interrupt internally, tell the CPU and then clear the device */
     DEBUG("Telling APIC to move on from this interrupt...\n");
     IRQ_HANDLER_END(); // Lets APIC know interrupt is over
+
+    /* For debugging purposes, print out the BDL contents after our processing */
+    // print_bdl_out(state);
 
     /* Resume device 
     DEBUG("Resuming device since the interrupt is handled...\n");
@@ -1557,17 +1561,22 @@ static int handle_add_sound_buffers(char *buf, void *priv)
     uint64_t freq;
 
     if(sscanf(buf, "add_sound_buffers %d %d", &nbuf, &freq) == 2) {
+        DEBUG("Adding %d sound buffers playing a sine wave at frequency %d\n", nbuf, freq);
+
         // Create one huge sine buffer
-        uint16_t buf_len = nbuf * 0xFFFE; // total number of samples
-        uint16_t *sine_buf = (uint16_t *)malloc(2*buf_len); // each sample is 2 bytes
+        uint64_t buf_len = nbuf * 0xFFFE; // total number of samples
+        uint16_t *sine_buf = (uint16_t *) malloc(2*buf_len); // each sample is 2 bytes
         if (!sine_buf) {
             nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
             return 0;
         }
         create_sine_wave(sine_buf, buf_len, freq, 44100); // TODO: pull sampling freq from device state
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) sine_buf);
+
 
         // Chop the samples and have the AC97 add them
         for (int i = 0; i < nbuf; i++) {
+            DEBUG("Buffer %d will be at address %x\n", i, (uint32_t) (sine_buf + (i * 0xFFFE)));
             ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0xFFFE), 0xFFFE); // TODO: Is alignment okay here? Seemed sketchy during OH
         }
         return 0;
