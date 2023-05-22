@@ -399,9 +399,14 @@ static void create_sine_wave(uint16_t *buffer, uint16_t buffer_len, uint64_t ton
     {
         double x = (double) i * 2.0 * M_PI * (double) tone_frequency / (double) sampling_frequency;
         double sin_val = new_sin(x);
-        buffer[i] = (uint16_t) (sin_val * 5000.0);
-        buffer[i+1] = (uint16_t) (sin_val * 5000.0);
+        buffer[i] = (uint16_t) (sin_val * 30000.0);
+        buffer[i+1] = (uint16_t) (sin_val * 30000.0);
     }
+
+    //for(uint16_t i = 0; i < 360; i++){
+    //    uint16_t sample = buffer[i];
+    //    DEBUG("Sin sample %d value: %hd\n",i,sample);
+    //}
 }
 
 
