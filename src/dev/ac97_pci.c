@@ -1563,7 +1563,7 @@ static int handle_add_sound_buffers(char *buf, void *priv)
 
         // Chop the samples and have the AC97 add them
         for (int i = 0; i < nbuf; i++) {
-            ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0xFFFE), 0xFFFE);
+            ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0xFFFE), 0xFFFE); // TODO: Is alignment okay here? Seemed sketchy during OH
         }
         return 0;
     }
