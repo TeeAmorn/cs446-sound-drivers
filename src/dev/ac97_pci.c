@@ -25,6 +25,7 @@
  * redistribute, and modify it as specified in the file "LICENSE.txt".
  */
 
+// TODO: Why don't we get interrupted again after playing entry 0?
 #include <nautilus/nautilus.h>
 #include <nautilus/sounddev.h>
 #include <nautilus/cpu.h>
@@ -69,33 +70,33 @@
 #define BDL_ENTRY_MAX_SIZE 0xFFFE                  // a single BDL entry can transfer up to this many samples
 #define BDL_INC(a, b) (((a) + (b)) % BDL_MAX_SIZE) // modular increment bdl index
 
-#define BDL_IN (state->bdl_in_desc)                                      // access BDL Descriptor for PCM IN of an ac97_state struct
-#define IN_HEAD (BDL_IN->head_pos)                                       // pointer to current head of PCM IN ring
-#define IN_TAIL (BDL_IN->tail_pos)                                        // pointer to current tail of PCM IN ring
-#define IN_SIZE (BDL_IN->size)                                            // effective size of PCM IN ring (its overall size is BDL_MAX_SIZE)
-#define IN_RING (BDL_IN->bdl_ring)                                       // pointer to the PCM IN ring itself
+#define BDL_IN (state->bdl_in_desc)                               // access BDL Descriptor for PCM IN of an ac97_state struct
+#define IN_HEAD (BDL_IN->head_pos)                                // pointer to current head of PCM IN ring
+#define IN_TAIL (BDL_IN->tail_pos)                                // pointer to current tail of PCM IN ring
+#define IN_SIZE (BDL_IN->size)                                    // effective size of PCM IN ring (its overall size is BDL_MAX_SIZE)
+#define IN_RING (BDL_IN->bdl_ring)                                // pointer to the PCM IN ring itself
 #define IN_ENTRY(i) (((ac97_bdl_entry *)IN_RING)[(i)])            // retrieve entire entry at index i
 #define IN_ENTRY_ADDR(i) (((ac97_bdl_entry *)IN_RING)[(i)].addr)  // address to buffer of sound data for the entry at index i
 #define IN_ENTRY_SIZE(i) (((ac97_bdl_entry *)IN_RING)[(i)].size)  // number of samples in the buffer of sound data for the entry at index i
 #define IN_ENTRY_LAST(i) (((ac97_bdl_entry *)IN_RING)[(i)].last)  // flags to fire an interrupt signaling that this is the last entry in buffer
 #define IN_ENTRY_IOC(i) (((ac97_bdl_entry *)IN_RING)[(i)].ioc)    // flags to fire an interrupt when this buffer is fully consumed
 
-#define BDL_OUT (state->bdl_out_desc)                                     // access BDL Descriptor for PCM OUT of an ac97_state struct
-#define OUT_HEAD (BDL_OUT->head_pos)                                      // pointer to current head of PCM OUT ring
-#define OUT_TAIL (BDL_OUT->tail_pos)                                       // pointer to current tail of PCM OUT ring
-#define OUT_SIZE (BDL_OUT->size)                                           // effective size of PCM OUT ring (its overall size is BDL_MAX_SIZE)
-#define OUT_RING (BDL_OUT->bdl_ring)                                      // pointer to the PCM OUT ring itself
+#define BDL_OUT (state->bdl_out_desc)                              // access BDL Descriptor for PCM OUT of an ac97_state struct
+#define OUT_HEAD (BDL_OUT->head_pos)                               // pointer to current head of PCM OUT ring
+#define OUT_TAIL (BDL_OUT->tail_pos)                               // pointer to current tail of PCM OUT ring
+#define OUT_SIZE (BDL_OUT->size)                                   // effective size of PCM OUT ring (its overall size is BDL_MAX_SIZE)
+#define OUT_RING (BDL_OUT->bdl_ring)                               // pointer to the PCM OUT ring itself
 #define OUT_ENTRY(i) (((ac97_bdl_entry *)OUT_RING)[(i)])           // retrieve entire entry at index i
 #define OUT_ENTRY_ADDR(i) (((ac97_bdl_entry *)OUT_RING)[(i)].addr) // address to buffer of sound data for the entry at index i
 #define OUT_ENTRY_SIZE(i) (((ac97_bdl_entry *)OUT_RING)[(i)].size) // number of samples in the buffer of sound data for the entry at index i
 #define OUT_ENTRY_LAST(i) (((ac97_bdl_entry *)OUT_RING)[(i)].last) // flags to fire an interrupt signaling that this is the last entry in buffer
 #define OUT_ENTRY_IOC(i) (((ac97_bdl_entry *)OUT_RING)[(i)].ioc)   // flags to fire an interrupt when this buffer is fully consumed
 
-#define BDL_MIC (state->bdl_mic_desc)                                     // access BDL Descriptor for PCM MIC of an ac97_state struct
-#define MIC_HEAD (BDL_MIC->head_pos)                                      // pointer to current head of PCM MIC ring
-#define MIC_TAIL (BDL_MIC->tail_pos)                                       // pointer to current tail of PCM MIC ring
-#define MIC_SIZE (BDL_MIC->size)                                           // effective size of PCM MIC ring (its overall size is BDL_MAX_SIZE)
-#define MIC_RING (BDL_MIC->bdl_ring)                                      // pointer to the PCM MIC ring itself
+#define BDL_MIC (state->bdl_mic_desc)                              // access BDL Descriptor for PCM MIC of an ac97_state struct
+#define MIC_HEAD (BDL_MIC->head_pos)                               // pointer to current head of PCM MIC ring
+#define MIC_TAIL (BDL_MIC->tail_pos)                               // pointer to current tail of PCM MIC ring
+#define MIC_SIZE (BDL_MIC->size)                                   // effective size of PCM MIC ring (its overall size is BDL_MAX_SIZE)
+#define MIC_RING (BDL_MIC->bdl_ring)                               // pointer to the PCM MIC ring itself
 #define MIC_ENTRY(i) (((ac97_bdl_entry *)MIC_RING)[(i)])           // retrieve entire entry at index i
 #define MIC_ENTRY_ADDR(i) (((ac97_bdl_entry *)MIC_RING)[(i)].addr) // address to buffer of sound data for the entry at index i
 #define MIC_ENTRY_SIZE(i) (((ac97_bdl_entry *)MIC_RING)[(i)].size) // number of samples in the buffer of sound data for the entry at index i
@@ -410,257 +411,6 @@ static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t ton
     //}
 }
 
-
-
-// accessor functions for device registers
-
-// static INLine uint32_t hda_pci_read_regl(struct ac97_state *dev, uint32_t offset)
-// {
-//     uint32_t result;
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-//     }
-//     else
-//     {
-//         result = INL(dev->ioport_start + offset);
-//     }
-//     DEBUG_REGS("readl %08x returns %08x\n", offset, result);
-//     return result;
-// }
-
-// static INLine uint16_t hda_pci_read_regw(struct ac97_state *dev, uint32_t offset)
-// {
-//     uint16_t result;
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-//     }
-//     else
-//     {
-//         result = INW(dev->ioport_start + offset);
-//     }
-//     DEBUG_REGS("readw %08x returns %04x\n", offset, result);
-//     return result;
-// }
-
-// static INLine uint8_t hda_pci_read_regb(struct ac97_state *dev, uint32_t offset)
-// {
-//     uint8_t result;
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-//     }
-//     else
-//     {
-//         result = INB(dev->ioport_start + offset);
-//     }
-//     DEBUG_REGS("readb %08x returns %02x\n", offset, result);
-//     return result;
-// }
-
-// static INLine void hda_pci_write_regl(struct ac97_state *dev, uint32_t offset, uint32_t data)
-// {
-//     DEBUG_REGS("writel %08x with %08x\n", offset, data);
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-//     }
-//     else
-//     {
-//         OUTL(data, dev->ioport_start + offset);
-//     }
-// }
-
-// static INLine void hda_pci_write_regw(struct ac97_state *dev, uint32_t offset, uint16_t data)
-// {
-//     DEBUG_REGS("writew %08x with %04x\n", offset, data);
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-//     }
-//     else
-//     {
-//         OUTW(data, dev->ioport_start + offset);
-//     }
-// }
-
-// static INLine void hda_pci_write_regb(struct ac97_state *dev, uint32_t offset, uint8_t data)
-// {
-//     DEBUG_REGS("writeb %08x with %02x\n", offset, data);
-//     if (dev->method == MEMORY)
-//     {
-//         uint64_t addr = dev->mem_start + offset;
-//         __asm__ __volatile__ ("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-//     }
-//     else
-//     {
-//         OUTB(data, dev->ioport_start + offset);
-//     }
-// }
-
-// //sets volume, what is the difference between PCM/master vol?
-// static void set_volume(struct ac97_state *dev, struct volume_t *vol){
-//     hda_pci_write_regw(dev,AC97_NAM_MASTER_VOL, vol);
-//     hda_pci_write_regw(dev,AC97_NAM_PCM_OUT_VOL, vol);
-// }
-// TODO: rx and tx desc are the transmit and recieve buffers for e100o device, not needed for sound dev???
-// struct e1000e_rx_desc
-// {
-//     uint64_t *addr;
-//     uint16_t length;
-//     uint16_t checksum;
-//     struct
-//     {
-//         uint8_t dd : 1;
-//         uint8_t eop : 1;
-//         uint8_t ixsm : 1;
-//         uint8_t vp : 1;
-//         uint8_t rsv : 1;
-//         uint8_t tcpcs : 1;
-//         uint8_t ipcs : 1;
-//         uint8_t pif : 1;
-//     } status;
-//     uint8_t errors;
-//     uint16_t special;
-// } __attribute__((packed));
-
-// // legacy mode
-// struct e1000e_tx_desc
-// {
-//     uint64_t *addr;
-//     uint16_t length;
-//     uint8_t cso;
-//     union
-//     {
-//         struct
-//         {
-//             uint8_t eop : 1;
-//             uint8_t ifcs : 1;
-//             uint8_t ic : 1;
-//             uint8_t rs : 1;
-//             uint8_t rsvd : 1;
-//             uint8_t dext : 1;
-//             uint8_t vle : 1;
-//             uint8_t ide : 1;
-//         } bit;
-//         uint8_t byte;
-//     } cmd;
-//     struct
-//     {
-//         uint8_t dd : 1;
-//         uint8_t ec : 1;
-//         uint8_t lc : 1;
-//         uint8_t rsvtu : 1;
-//         uint8_t rsvd2 : 4;
-//     } status;
-//     uint8_t css;
-//     uint16_t special;
-// } __attribute__((packed));
-
-// // TODO change the type of context to void
-// struct e1000e_fn_map
-// {
-//     void (*callback)(nk_net_dev_status_t, void *);
-//     uint64_t *context;
-// };
-
-// struct e1000e_map_ring
-// {
-//     struct e1000e_fn_map *map_ring;
-//     // head and tail positions of the fn_map ring queue
-//     uint64_t head_pos;
-//     uint64_t tail_pos;
-//     // the number of elements in the map ring buffer
-//     uint64_t ring_len;
-// };
-
-// // Timing
-// struct tsc
-// {
-//     uint64_t start;
-//     uint64_t end;
-// };
-// typedef struct tsc tsc_t;
-
-// struct operation
-// {
-//     // should be a postx, but I did last week.
-//     tsc_t postx_map;    // measure the time in post_tx, post_rx
-//     tsc_t xpkt;         // send_packet, receive_packet
-//     tsc_t irq;          // irq_handler
-//     tsc_t irq_unmap;    // unmap callback in the irq function
-//     tsc_t irq_callback; // invoke the callback function in the irq
-
-//     tsc_t irq_macro; // IRQ_HANDLER_END() macro
-//     tsc_t irq_reg;   // reading a value from the reg in the irq function
-//     tsc_t dev_wait;
-//     uint32_t dev_wait_count;
-// };
-// typedef struct operation op_t;
-
-// struct iteration
-// {
-//     op_t tx;
-//     op_t rx;
-//     uint32_t irq_tx;
-//     uint32_t irq_rx;
-//     uint32_t irq_unknown; // count the unknown irq
-// };
-// typedef struct iteration iteration_t;
-
-// // add timing code
-// #define TIMING 0
-
-// #if TIMING
-// #define TIMING_GET_TSC(x) ((x) = rdtsc())
-// #define TIMING_DIFF_TSC(r, s, e) ((r) = (e) - (s))
-// #else
-// #define TIMING_GET_TSC(x)
-// #define TIMING_DIFF_TSC(r, s, e)
-// #endif
-
-// struct e1000e_state
-// {
-//     // a pointer to the base class
-//     struct nk_net_dev *netdev;
-//     // pci interrupt and interupt vector
-//     struct pci_dev *pci_dev;
-
-//     // our device list
-//     struct list_head node;
-
-//     // Where registers are mapped into the I/O address space
-//     uint16_t ioport_start;
-//     uint16_t ioport_end;
-//     // Where registers are mapped into the physical memory address space
-//     uint64_t mem_start;
-//     uint64_t mem_end;
-
-//     char name[DEV_NAME_LEN];
-//     uint8_t mac_addr[6];
-
-//     struct e1000e_desc_ring *tx_ring;
-//     struct e1000e_desc_ring *rxd_ring;
-//     // a circular queue mapping between callback function and tx descriptor
-//     struct e1000e_map_ring *tx_map;
-//     // a circular queue mapping between callback funtion and rx descriptor
-//     struct e1000e_map_ring *rx_map;
-//     // the size of receive buffers
-//     uint64_t rx_buffer_size;
-//     // interrupt mark set
-//     uint32_t ims_reg;
-
-// #if TIMING
-//     volatile iteration_t measure;
-// #endif
-// };
-
 // // list of discovered devices
 static struct list_head dev_list;
 static struct ac97_state *dirty_state; 
@@ -675,6 +425,145 @@ static struct nk_sound_dev_int ops = {
     .write_to_stream = NULL, //TODO: implement function
     .get_stream_params = NULL, //TODO: implement function
 };
+
+int print_bdl_out(struct ac97_state *state)
+{
+    /* 
+    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
+    */
+    DEBUG("Printing the contents of the PCM OUT BDL...\n");
+    for (int i = 0; i < BDL_MAX_SIZE; i++)
+    {
+        ac97_bdl_entry entry = OUT_ENTRY(i);
+        DEBUG("Entry %d: %016lx\n", i, entry.val);
+    }
+    return 0;
+}
+
+int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint16_t num_samples)
+{
+    /* Recieves a pointer to a chunk of data in memory, and the size of the buffer.
+       This function assumes the buffer is compliant with the byte granularity decided upon in the ac97_state.
+
+        NOTE: The inputted ac97_state must be named 'state' for macros to work properly
+        NOTE: This function assumes the user is responsible for chopping up data into buffers with at most 0xFFFE samples
+    */
+
+    /* Our code maintains the buffer size; we don't want to overwrite unconsumed buffer entries */
+    /* TODO: Should there be some queue of next buffer entries to process? If so, we should add
+             this request to the queue instead of raising an error */
+    if (OUT_SIZE == BDL_MAX_SIZE)
+    {
+        ERROR("Attempted to overwrite an unconsumed buffer entry!\n");
+        return -1;
+    }
+
+    /* Check input buffer size for compliance with what the AC97 expects */
+    if (num_samples > BDL_ENTRY_MAX_SIZE)
+    {
+        ERROR("Attempted to write a buffer with too many samples for an AC97!\n");
+        return -1;
+    }
+
+    /* Write the buffer entry */
+    uint8_t write_pos = OUT_TAIL;                 // tail will always point to the next writeable position
+    
+    DEBUG("Updating the PCM OUT BDL entry at position 0x%x\n", write_pos);
+    OUT_ENTRY_ADDR(write_pos) = (uint32_t) buffer; // cast void* to a uint32_t (must be under 4GB memory)
+    OUT_ENTRY_SIZE(write_pos) = num_samples;
+    OUT_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
+    OUT_ENTRY_IOC(write_pos) = 1;  // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
+    DEBUG("BDL entry now states: %016lx\n", OUT_ENTRY(write_pos).val);
+
+    /* Tell the device what the new last valid entry is */
+    last_valid_entry_t lve;
+    lve.last_entry = write_pos; // BDL_INC(write_pos, 1)?
+    lve.rsvd = 0;
+    DEBUG("Reporting to device the new last valid entry...\n");
+    OUTB(lve.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+
+    /*
+    Manage our BDL Ring's state variables
+    */
+    OUT_TAIL = BDL_INC(write_pos, 1); // increment the tail
+
+    /* Turn off the last bit of the previous entry; we just wrote the new last */
+    if (OUT_SIZE > 0)
+    {
+        // Is there a nice macro for BDL_DEC that wraps around?
+        if (write_pos == 0)
+            write_pos = 31;
+        else
+            write_pos -= 1;
+        OUT_ENTRY_LAST(write_pos) = 0;
+    }
+
+    OUT_SIZE += 1; // update effective size of BDL
+
+    return 0;
+}
+
+int ac97_consume_out_buffer(struct ac97_state *state)
+{
+    /* Frees the buffer most recently consumed by the AC97 device.
+
+       NOTE: The inputted ac97_state must be named 'state' for macros to work properly
+    */
+
+    /* Our code maintains the buffer size; we can't consume if there are no entries */
+    if (OUT_SIZE == 0)
+    {
+        ERROR("Attempted to consume a non-existent BDL entry!\n");
+        return -1;
+    }
+
+    /* Ask the device what the current processed entry is. Error if we are misaligned. */
+    // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
+    // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
+    DEBUG("Asking the device for the value of the APE...\n");
+    uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
+    if (((last_valid_entry_t)curr_entry).last_entry != BDL_INC(OUT_HEAD, 1))
+    {
+        // The if check above is weird, but the last_valid_entry register has the same structure
+        // as the actual_processed_entry register, so I'm just taking advantage of the existing struct
+        ERROR("State variable is not consistent with device!\n");
+        return -1;
+    }
+
+    /* Ask the device how many samples it has transferred from the current processed entry.
+       Error if we are somehow consuming the buffer before all samples have been transferred.
+    */
+    /*
+    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
+          how many samples have been transferred from the APE, or if we're doing something incorrectly.
+
+    uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
+    if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
+    {
+        ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
+        return -1;
+    }
+    */
+
+    /* Free the contents of the consumed buffer, then reset the buffer entry */
+    // TODO: Perhaps the user space should be responsible for freeing the buffers
+    uint8_t free_pos = OUT_HEAD;
+
+    DEBUG("Clearing the buffer at position %d of the PCM OUT BDL\n", free_pos);
+    // free((void*) OUT_ENTRY_ADDR(free_pos)); // TODO: Should the driver be responsible for freeing buffers, or should the application clean them up?
+    OUT_ENTRY_ADDR(free_pos) = 0;
+    OUT_ENTRY_SIZE(free_pos) = 0;
+    OUT_ENTRY_LAST(free_pos) = 0;
+    OUT_ENTRY_IOC(free_pos) = 0;
+
+    /*
+    Manage our BDL Ring's state variables
+    */
+    OUT_HEAD = BDL_INC(free_pos, 1); // increment the head
+    OUT_SIZE -= 1;                   // update effective size of BDL
+
+    return 0;
+}
 
 static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
 {
@@ -693,8 +582,8 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     transfer_status_t tr_stat = (transfer_status_t)trans_status;
     DEBUG("Transfer status register contents: %x\n", tr_stat.val);
 
-    /* Should the device halt when it sends an interrupt? */
-    if (tr_stat.dma_status == 0) ERROR("Device is not halted, but we're handling an interrupt!\n");
+    /* Should the device halt when it sends an interrupt? (Apparently not)*/
+    // if (tr_stat.dma_status == 0) ERROR("Device is not halted, but we're handling an interrupt!\n");
     
     /* Handle the interrupt internally based on the contents of the Transfer Status register. */
     // TODO: We may want to handle different interrupts differently. Implement this.
@@ -710,6 +599,21 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         DEBUG("Handling ioc interrupt from a consumed buffer...\n");
         ac97_consume_out_buffer(state);
         // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
+
+        /*
+        Test that the device properly manages the ring buffer state variables by playing
+        continuous sound
+        */
+        uint64_t buf_len = 0x1000;
+        uint16_t *sine_buf = (uint16_t *) malloc(2 * buf_len); // each sample is 2 bytes
+        if (!sine_buf)
+        {
+            nk_vc_printf("ERROR: Could not allocate half-length sound buffer\n");
+            return 0;
+        }
+        uint64_t tone_freq = (OUT_HEAD * (500 - 200) / (BDL_MAX_SIZE - 1)) + 200; // stepped frequency between 200 and 500
+        create_sine_wave(sine_buf, buf_len, tone_freq, 44100); // TODO: pull sampling freq from device state
+        ac97_produce_out_buffer(state, sine_buf, 0x1000);
     }
     else if (tr_stat.fifo_interrupt == 1) {
         DEBUG("Handling fifo error interrupt...\n");
@@ -1440,119 +1344,6 @@ int ac97_deinit_output_bdl(struct ac97_state* state) {
     return 0; // indicate success
 }
 
-int ac97_produce_out_buffer(struct ac97_state* state, void* buffer, uint16_t num_samples)
-{
-    /* Recieves a pointer to a chunk of data in memory, and the size of the buffer. 
-       This function assumes the buffer is compliant with the byte granularity decided upon in the ac97_state.
-
-        NOTE: The inputted ac97_state must be named 'state' for macros to work properly
-        NOTE: This function assumes the user is responsible for chopping up data into buffers with at most 0xFFFE samples
-    */
-    
-    /* Our code maintains the buffer size; we don't want to overwrite unconsumed buffer entries */
-    /* TODO: Should there be some queue of next buffer entries to process? If so, we should add
-             this request to the queue instead of raising an error */
-    if (OUT_SIZE == 32) {
-        ERROR("Attempted to overwrite an unconsumed buffer entry!\n");
-        return -1;
-    }
-
-    /* Check input buffer size for compliance with what the AC97 expects */
-    if (num_samples > BDL_ENTRY_MAX_SIZE) {
-        ERROR("Attempted to write a buffer with too many samples for an AC97!\n");
-        return -1;
-    }
-
-    /* Write the buffer entry */
-    uint8_t write_pos = OUT_TAIL; // tail will always point to the next writeable position
-    OUT_ENTRY_ADDR(write_pos) = (uint32_t) buffer; // cast void* to a uint32_t (must be under 4GB memory)
-    OUT_ENTRY_SIZE(write_pos) = num_samples;
-    OUT_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
-    OUT_ENTRY_IOC(write_pos) = 1; // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
-    
-    /* Tell the device what the new last valid entry is */
-    last_valid_entry_t lve;
-    lve.last_entry = write_pos; // BDL_INC(write_pos, 1)? 
-    lve.rsvd = 0;
-    OUTB(lve.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
-
-    /*
-    Manage our BDL Ring's state variables
-    */
-    OUT_TAIL = BDL_INC(write_pos, 1); // increment the tail
-
-    /* Turn off the last bit of the previous entry; we just wrote the new last */
-    if (OUT_SIZE > 0) { 
-        // Is there a nice macro for BDL_DEC that wraps around? 
-        if (write_pos == 0) write_pos = 31;
-        else write_pos -= 1;
-        OUT_ENTRY_LAST(write_pos) = 0;
-    }
-
-    OUT_SIZE += 1; // update effective size of BDL
-
-    return 0;
-}
-
-int ac97_consume_out_buffer(struct ac97_state *state)
-{
-    /* Frees the buffer most recently consumed by the AC97 device. 
-
-       NOTE: The inputted ac97_state must be named 'state' for macros to work properly
-    */
-
-    /* Our code maintains the buffer size; we can't consume if there are no entries */
-    if (OUT_SIZE == 0)
-    {
-        ERROR("Attempted to consume a non-existent BDL entry!\n");
-        return -1;
-    }
-
-    /* Ask the device what the current processed entry is. Error if we are misaligned. */
-    // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety 
-    // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
-    DEBUG("Asking the device for the value of the APE...\n");
-    uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
-    if (((last_valid_entry_t) curr_entry).last_entry != BDL_INC(OUT_HEAD, 1)) {
-        // The if check above is weird, but the last_valid_entry register has the same structure 
-        // as the actual_processed_entry register, so I'm just taking advantage of the existing struct
-        ERROR("State variable is not consistent with device!\n");
-        return -1;
-    }
-
-    /* Ask the device how many samples it has transferred from the current processed entry. 
-       Error if we are somehow consuming the buffer before all samples have been transferred.
-    */
-    /* 
-    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
-          how many samples have been transferred from the APE, or if we're doing something incorrectly.
-
-    uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
-    if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
-    {
-        ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
-        return -1;
-    }
-    */
-
-    /* Free the contents of the consumed buffer, then reset the buffer entry */
-    // TODO: Perhaps the user space should be responsible for freeing the buffers
-    uint8_t free_pos = OUT_HEAD;
-    // free((void*) OUT_ENTRY_ADDR(free_pos)); // TODO: Should the driver be responsible for freeing buffers, or should the application clean them up? 
-    OUT_ENTRY_ADDR(free_pos) = 0;
-    OUT_ENTRY_SIZE(free_pos) = 0;
-    OUT_ENTRY_LAST(free_pos) = 0;
-    OUT_ENTRY_IOC(free_pos) = 0; 
-
-    /*
-    Manage our BDL Ring's state variables
-    */
-    OUT_HEAD = BDL_INC(free_pos, 1); // increment the head
-    OUT_SIZE -= 1; // update effective size of BDL
-
-    return 0;
-}
-
 // TODO: Undirty this function by removing its use of the dirty_state static struct
 static int handle_add_sound_buffers(char *buf, void *priv)
 {
@@ -1564,7 +1355,7 @@ static int handle_add_sound_buffers(char *buf, void *priv)
         DEBUG("Adding %d sound buffers playing a sine wave at frequency %d\n", nbuf, freq);
 
         // Create one huge sine buffer
-        uint64_t buf_len = nbuf * 0xFFFE; // total number of samples
+        uint64_t buf_len = nbuf * 0x1000; // total number of samples
         uint16_t *sine_buf = (uint16_t *) malloc(2*buf_len); // each sample is 2 bytes
         if (!sine_buf) {
             nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
@@ -1576,8 +1367,8 @@ static int handle_add_sound_buffers(char *buf, void *priv)
 
         // Chop the samples and have the AC97 add them
         for (int i = 0; i < nbuf; i++) {
-            DEBUG("Buffer %d will be at address %x\n", i, (uint32_t) (sine_buf + (i * 0xFFFE)));
-            ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0xFFFE), 0xFFFE); // TODO: Is alignment okay here? Seemed sketchy during OH
+            DEBUG("Buffer %d will be at address %x\n", i, (uint32_t)(sine_buf + (i * 0x1000)));
+            ac97_produce_out_buffer(dirty_state, sine_buf + (i * 0x1000), 0x1000); // TODO: Is alignment okay here? Seemed sketchy during OH
         }
         return 0;
     }
@@ -1626,17 +1417,6 @@ int ac97_pci_deinit()
 {
     /* TODO: Call ac97_deinit_output_bdl */
     INFO("deinited and leaking\n");
-    return 0;
-}
-
-int print_bdl_out(struct ac97_state* state)
-{
-    DEBUG("Printing the contents of the PCM OUT BDL...\n");
-    for (int i=0; i<BDL_MAX_SIZE; i++) 
-    {
-        ac97_bdl_entry entry = OUT_ENTRY(i);
-        DEBUG("Entry %d: %016lx\n", i, entry.val);
-    }
     return 0;
 }
 
