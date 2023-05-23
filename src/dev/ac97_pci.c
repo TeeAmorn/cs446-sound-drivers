@@ -267,8 +267,16 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     struct ac97_bdl_desc *bdl_out_desc;
     struct ac97_bdl_desc *bdl_mic_desc;
 
+    // All potential stream configuration options, to be filled out during the device's init
+    uint32_t max_rate;       
+    uint8_t max_resolution; 
+    uint8_t max_channels; 
+    nk_sound_dev_scale_t allowed_scales;
+
+    // The AC97 can support up to 1 input stream. The user application must support mixing. 
+    struct nk_sound_dev_stream stream;
+
     // TODO: What else do we need to add?
-    // We will need to track the parameters of the stream, once we get to that point
 };
 
 /* ac97_desc_ring stores ac97_bdl_entry objects */
@@ -425,6 +433,23 @@ static struct nk_sound_dev_int ops = {
     .write_to_stream = NULL, //TODO: implement function
     .get_stream_params = NULL, //TODO: implement function
 };
+
+int ac97_get_available_sample_resolutions(void* state, uint8_t* resolutions, uint8_t *num_options)
+{
+    /* 
+    Is this the right way to go? This function assumes the user has allocated an array to 
+    be filled, and that we tell it how many options we can support. Should the user have to 
+    free this, and if so, how should they know how large it should be in the first place? 
+    */
+    struct ac97_state* _state = (struct ac97_state*) state;
+    *num_options = 0;
+
+    // AC97 supports up to 16 or 20 bit audio, max_resolution field of the AC97 State tells which
+    for (int i = 16; i <= _state->max_resolution; i+=4) {
+        resolutions[*num_options] = i;
+        *num_options++;
+    }
+}
 
 int print_bdl_out(struct ac97_state *state)
 {
@@ -788,23 +813,26 @@ int ac97_pci_init(struct naut_info *naut)
 
                 /* Isolate 20th and 21st bits to see how many channels this AC97 can support */
                 uint32_t channels_supported = (stat_reg & 0x00300000) >> 20; 
+                
                 // Translate bits to integer channel capabilities
-                if (channels_supported == 0) channels_supported = 2;
-                else if (channels_supported == 1) channels_supported = 4;
-                else if (channels_supported == 2) channels_supported = 6;
-                else DEBUG("AC97 channel bits were set to 11, indicating reserved behavior.");
+                if (channels_supported == 0) {
+                    state->max_channels = 2;
+                }
+                else if (channels_supported == 1) {
+                    state->max_channels = 4;
+                }
+                else if (channels_supported == 2) {
+                    state->max_channels = 6;
+                }
+                else DEBUG("AC97 channel bits are indicating reserved behavior.");
 
                 /* Isolate 22nd and 23rd bits to see the maximum supported bit granularity of samples */
                 uint32_t max_bit_samples = (stat_reg & 0x00C00000) >> 22;
                 // Translate bits to integer channel capabilities
-                if (max_bit_samples == 1) max_bit_samples = 20;
-                else max_bit_samples = 16;
+                if (max_bit_samples == 1) state->max_resolution = 20;
+                else state->max_resolution = 16;
 
-                // TODO: The information from the card capabilities register should probably be stored in
-                //       the device state so we know which configuration options are possible when someone
-                //       calls an abstraction function like nk_sound_dev_get_available_sample_resolution()
-
-                DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", channels_supported, max_bit_samples);
+                DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", state->max_channels, state->max_resolution);
 
                 /* Allow device to use DMA */
                 uint16_t old_cmd = pci_cfg_readw(bus->num, pdev->num, 0, 0x4);

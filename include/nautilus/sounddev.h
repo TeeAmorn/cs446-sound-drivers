@@ -38,11 +38,49 @@ typedef enum
     NK_SOUND_DEV_SCALE_LOGARITHMIC
 } nk_sound_dev_scale_t;
 
+typedef enum
+{
+    NK_SOUND_DEV_INPUT_STREAM,
+    NK_SOUND_DEV_OUTPUT_STREAM
+} nk_sound_dev_stream_t;
+
+typedef enum
+{
+    NK_SOUND_DEV_SAMPLE_RATE_8kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_11kHZ025,
+    NK_SOUND_DEV_SAMPLE_RATE_16kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_22kHZ05,
+    NK_SOUND_DEV_SAMPLE_RATE_32kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_44kHZ1,
+    NK_SOUND_DEV_SAMPLE_RATE_48kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_88kHZ2,
+    NK_SOUND_DEV_SAMPLE_RATE_96kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_176kHZ4,
+    NK_SOUND_DEV_SAMPLE_RATE_192kHZ,
+    NK_SOUND_DEV_SAMPLE_RATE_384kHZ,
+} nk_sound_dev_sample_rate_t;
+
+typedef enum
+{
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_8,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_16,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_20,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_24,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_32,
+} nk_sound_dev_sample_resolution_t;
+
+// TODO: DATA FORMAT
+// Data Format
+// - Endianness
+// - Buffer alignment
+// - Sample alignment
+
 struct nk_sound_dev_params
 {
-    uint32_t sample_rate;
-    uint8_t sample_resolution;
+    nk_sound_dev_stream_t type;
     uint8_t num_of_channels;
+    nk_sound_dev_sample_rate_t sample_rate;
+    nk_sound_dev_sample_resolution_t sample_resolution;
     nk_sound_dev_scale_t scale;
 };
 
@@ -80,31 +118,33 @@ struct nk_sound_dev_int
     // device driver
 
     // interface to learn about parameters supported by the sound device driver
-    int (*get_available_sample_rates)(void *state, uint32_t rates[]);
-    int (*get_available_sample_resolution)(void *state, uint8_t resolutions[]);
-    int (*get_available_num_of_channels)(void *state, uint8_t channels[]);
-    int (*get_available_scale)(void *state, nk_sound_dev_scale_t scales[]);
+    int (*get_available_modes)(void *state, struct nk_sound_dev_params params[],
+                              uint32_t params_size);
 
     // interface to open/close streams
-    struct nk_sound_dev_stream *(*open_stream)(void *state, struct nk_sound_dev_params *params);
+    struct nk_sound_dev_stream *(*open_stream)(
+        void *state, struct nk_sound_dev_params *params);
     int (*close_stream)(void *state, struct nk_sound_dev_stream *stream);
 
     // interface to write/read streams
-    int (*write_to_stream)(void *state,
-                           struct nk_sound_dev_stream *stream,
-                           uint8_t *src,
-                           uint64_t len,
-                           void (*callback)(nk_sound_dev_status_t status, void *context),
+    int (*write_to_stream)(void *state, struct nk_sound_dev_stream *stream,
+                           uint8_t *src, uint64_t len,
+                           void (*callback)(nk_sound_dev_status_t status,
+                                            void *context),
                            void *context);
-    int (*read_from_stream)(void *state,
-                            struct nk_sound_dev_stream *stream,
-                            uint8_t *dst,
-                            uint64_t len,
-                            void (*callback)(nk_sound_dev_status_t status, void *context),
+    int (*read_from_stream)(void *state, struct nk_sound_dev_stream *stream,
+                            uint8_t *dst, uint64_t len,
+                            void (*callback)(nk_sound_dev_status_t status,
+                                             void *context),
                             void *context);
 
     // interface to retrieve parameters of the given stream
-    int (*get_stream_params)(void *state, struct nk_sound_dev_stream *stream, struct nk_sound_dev_params *p);
+    int (*get_stream_params)(void *state, struct nk_sound_dev_stream *stream,
+                             struct nk_sound_dev_params *p);
+
+    // interface to play/stop stream
+    int (*play_stream)(void *state, struct nk_sound_dev_stream *stream);
+    int (*stop_stream)(void *state, struct nk_sound_dev_stream *stream);
 };
 
 struct nk_sound_dev
@@ -116,37 +156,41 @@ struct nk_sound_dev
 int nk_sound_dev_init();
 int nk_sound_dev_deinit();
 
-struct nk_sound_dev *nk_sound_dev_register(char *name, uint64_t flags, struct nk_sound_dev_int *inter, void *state);
+struct nk_sound_dev *nk_sound_dev_register(char *name, uint64_t flags,
+                                           struct nk_sound_dev_int *inter,
+                                           void *state);
 int nk_sound_dev_unregister(struct nk_sound_dev *);
 
 struct nk_sound_dev *nk_sound_dev_find(char *name);
 
-int nk_sound_dev_get_available_sample_rates(struct nk_sound_dev *dev, uint32_t rates[]);
-int nk_sound_dev_get_available_sample_resolution(struct nk_sound_dev *dev, uint8_t resolutions[]);
-int nk_sound_dev_get_available_num_of_channels(struct nk_sound_dev *dev, uint8_t channels[]);
-int nk_sound_dev_get_available_scale(struct nk_sound_dev *dev, nk_sound_dev_scale_t scales[]);
+int nk_sound_dev_get_available_modes(struct nk_sound_dev *dev,
+                                     struct nk_sound_dev_params params[],
+                                     uint32_t params_size);
 
-struct nk_sound_dev_stream *nk_sound_dev_open_stream(struct nk_sound_dev *dev, struct nk_sound_dev_params *params);
-int nk_sound_dev_close_stream(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream);
+struct nk_sound_dev_stream *
+nk_sound_dev_open_stream(struct nk_sound_dev *dev,
+                         struct nk_sound_dev_params *params);
+int nk_sound_dev_close_stream(struct nk_sound_dev *dev,
+                              struct nk_sound_dev_stream *stream);
 
-int nk_sound_dev_write_to_stream(struct nk_sound_dev *dev,
-                                 struct nk_sound_dev_stream *stream,
-                                 uint8_t *src,
-                                 uint64_t len,
-                                 nk_dev_request_type_t type,
-                                 void (*callback)(nk_sound_dev_status_t status,
-                                                  void *state),
-                                 void *state);
+int nk_sound_dev_write_to_stream(
+    struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, uint8_t *src,
+    uint64_t len, nk_dev_request_type_t type,
+    void (*callback)(nk_sound_dev_status_t status, void *state), void *state);
 
-int nk_sound_dev_read_to_stream(struct nk_sound_dev *dev,
-                                struct nk_sound_dev_stream *stream,
-                                uint8_t *dst,
-                                uint64_t len,
-                                nk_dev_request_type_t type,
-                                void (*callback)(nk_sound_dev_status_t status,
-                                                 void *state),
-                                void *state);
+int nk_sound_dev_read_to_stream(
+    struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, uint8_t *dst,
+    uint64_t len, nk_dev_request_type_t type,
+    void (*callback)(nk_sound_dev_status_t status, void *state), void *state);
 
-int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, struct nk_sound_dev_params *p);
+int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev,
+                                   struct nk_sound_dev_stream *stream,
+                                   struct nk_sound_dev_params *p);
+
+int nk_sound_dev_play_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream);
+
+int nk_sound_dev_stop_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream);
 
 #endif

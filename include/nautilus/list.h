@@ -110,7 +110,7 @@ static inline void list_add(struct list_head *nelm, struct list_head *head)
  * @nelm: new entry to be added
  * @head: list head to add it before
  *
- * Insert a nelm entry before the specified head.
+ * Insert a nelm entry before the specified head
  * This is useful for implementing queues.
  */
 static inline void list_add_tail(struct list_head *nelm, struct list_head *head)

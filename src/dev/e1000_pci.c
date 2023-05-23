@@ -794,8 +794,8 @@ int e1000_pci_init(struct naut_info * naut)
         // PCI Interrupt (A..D)
         state->pci_intr = cfg->dev_cfg.intr_pin;
 
-	// GRUESOME HACK
-	state->intr_vec = map_pci_irq_to_vec(bus,pdev);
+	      // GRUESOME HACK
+	      state->intr_vec = map_pci_irq_to_vec(bus,pdev);
 
         // find out the bar for e1000
         for (int i=0;i<6;i++) {
