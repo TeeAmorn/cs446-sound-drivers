@@ -164,7 +164,8 @@
 #define AC97_NAM_MIC_GAIN 0x1E       // sets gain of microphone while recording
 #define AC97_NAM_EXT_FUNC 0x28       // some cards support extra features (e.g. sampling rate != 48000 Hz)
 #define AC97_NAM_EXT_FUNC_EN 0x2A    // enable the extra features on the card, if any
-#define AC97_NAM_SAMP_RATE 0x2C      // sets sampling rate of device
+#define AC97_NAM_DAC_RATE 0x2C       // sets DAC sampling rate of device
+#define AC97_NAM_ADC_RATE 0x32       // seta ADC sampling rate of device
 
 // NATIVE AUDIO BUS MASTER REGISTER OFFSETS ************************************
 // These offsets are relative to the BAR1 base address. Reference: https://wiki.osdev.org/AC97
@@ -268,7 +269,7 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     struct ac97_bdl_desc *bdl_mic_desc;
 
     // All potential stream configuration options, to be filled out during the device's init
-    uint32_t max_rate;       
+    struct list_head sample_rates_list;          // holds ac97_sample_rate objects
     uint8_t max_resolution; 
     uint8_t max_channels; 
     nk_sound_dev_scale_t allowed_scales;
@@ -277,6 +278,13 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     struct nk_sound_dev_stream stream;
 
     // TODO: What else do we need to add?
+};
+
+/* Used to create a list of all possible sample rates supported by the AC97 */
+struct ac97_sample_rate
+{
+    uint16_t rate;        // the AC97 may support variable-rate frequencies between 7 and 48 kHz, which fit in a uint16_t
+    struct list_head node;
 };
 
 /* ac97_desc_ring stores ac97_bdl_entry objects */
@@ -424,34 +432,98 @@ static struct list_head dev_list;
 static struct ac97_state *dirty_state; 
 
 static struct nk_sound_dev_int ops = {
-    .get_available_sample_rates = NULL, //TODO: implement function
-    .get_available_sample_resolution = NULL, //TODO: implement function
-    .get_available_num_of_channels = NULL, //TODO: implement function
-    .get_available_scale = NULL, //TODO: implement function
+    .get_available_modes = NULL, //TODO: implement function
     .open_stream = NULL, //TODO: implement function
-    .close_stream = NULL, //TODO implement function
-    .write_to_stream = NULL, //TODO: implement function
+    .close_stream = NULL, //TODO: implement function
+    .write_to_stream = NULL, //TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
+    .read_from_stream = NULL, //TODO implement function
     .get_stream_params = NULL, //TODO: implement function
+    .play_stream = NULL, //TODO: implement function
+    .close_stream = NULL
 };
 
-int ac97_get_available_sample_resolutions(void* state, uint8_t* resolutions, uint8_t *num_options)
+int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], uint32_t params_size)
 {
-    /* 
-    Is this the right way to go? This function assumes the user has allocated an array to 
-    be filled, and that we tell it how many options we can support. Should the user have to 
-    free this, and if so, how should they know how large it should be in the first place? 
-    */
-    struct ac97_state* _state = (struct ac97_state*) state;
-    *num_options = 0;
+    /*
+    Given a pre-allocated array 'params' of size 'params_size', this function fills out the 'params' array
+    with as many permutations of stream configuration options as possible. The supported configuration options
+    are tracked in the 'state' object, which was presumably filled upon a call to ac97_pci_init() at boot.
 
-    // AC97 supports up to 16 or 20 bit audio, max_resolution field of the AC97 State tells which
+    This function returns the TOTAL number of possible permutations. Thus, if 'params' is large enough to hold
+    all possible configurations, the user can use the return value to traverse only elements that have been filled
+    by this function. Or, if 'params' is too small, the user can learn how large it should be. 
+    */
+
+    struct ac97_state* ac_state = (struct ac97_state*) state; // cast void* to struct ac97_state*
+
+    // AC97 may support 16 bit audio OR 16 and 20 bit audio. 
+    int n_res_options = (ac_state->max_resolution == 16) ? 1 : 2;
+
+    // AC97 may support audio for an even number of channels between 2 and 6
+    int n_chnl_options = ac_state->max_channels / 2; 
+
+    // After creating probe_variable_sample_rates, it turns out the AC97 seems to support ANY frequency between
+    // 7000 and 48000 Hz. Not sure how to finish this function because we definitely don't want to return a list of 
+    // 41000 integers. We need to talk to the other sound team to decide on how the abstraction layer will support this.
+
+    /*
     for (int i = 16; i <= _state->max_resolution; i+=4) {
-        resolutions[*num_options] = i;
-        *num_options++;
+       resolutions[*num_options] = i;
+       *num_options++;
+    }
+    */
+
+    ERROR("This function has not been finished!\n");
+    return -1; // TODO: return the number of filled options instead!
+}
+
+static void probe_variable_sample_rates(struct ac97_state *state) {
+    /* According to Page 13 of https://www.analog.com/media/en/technical-documentation/data-sheets/AD1887.pdf, 
+       the DAC/ADC rate registers allow programming of the sampling frequency from 7 kHz to 48 kHz in 1 Hz increments. 
+       Programming a value outside that range causes the codec to saturate. For valid inputs, if the value written is supported,
+       the device will echo it back. Otherwise, the closest rate supported is returned. 
+
+       This function probes the device for all possible inputs between 7 and 48 kHz, and places the supported inputs in the 
+       sample_rates_list of the passed ac97_state object. 
+    */
+    uint16_t port = state->ioport_start_bar0 + AC97_NAM_ADC_RATE;
+    uint16_t curr_rate = 0x1B58; // 7000
+    uint16_t last_valid_rate = 0;
+    uint16_t returned_rate;
+
+    while (curr_rate <= 0xBB80) // 48000
+    {
+        OUTW(curr_rate, port);
+        returned_rate = INW(port);
+
+        /* This block was used to validate that all 41000 possible frequency values between 7000 and 48000 were accepted 
+           by the QEMU AC97 via grep from the CLI. The string "was rejected!" was never found, so all rates were accepted.
+
+        if (returned_rate != curr_rate)
+        {
+            DEBUG("Requested rate %d was rejected!", curr_rate);
+        }
+        */
+       
+        if (returned_rate != last_valid_rate)
+        {
+            struct ac97_sample_rate *rate = (struct ac97_sample_rate *)malloc(sizeof(struct ac97_sample_rate));
+            if (!rate)
+            {
+                ERROR("Could not allocate AC97 Sample Rate struct!\n");
+                return -1;
+            }
+            rate->rate = returned_rate;
+            list_add(&rate->node, &state->sample_rates_list);
+
+            last_valid_rate = returned_rate;
+            curr_rate = returned_rate; // speeds up probing by moving up to the next valid rate
+        }
+        curr_rate += 1;
     }
 }
 
-int print_bdl_out(struct ac97_state *state)
+static int print_bdl_out(struct ac97_state *state)
 {
     /* 
     Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
@@ -833,6 +905,55 @@ int ac97_pci_init(struct naut_info *naut)
                 else state->max_resolution = 16;
 
                 DEBUG("This AC97 supports up to %d channels and %d-bit samples.\n", state->max_channels, state->max_resolution);
+
+                // Check extended capabilities register, which may allow for variable sample rates
+                DEBUG("Checking extended capabilities register...\n");
+                uint16_t caps = INW(state->ioport_start_bar0 + AC97_NAM_EXT_FUNC);
+
+                /* NOTE:
+                As of 5/23/2023, the QEMU AC97 returns 0x0809 when we read the extended capabilities register. This simply
+                indicates that the device's AC97 codec is compliant with Revision 2.3, and that variable rate audio is
+                possible.
+                Reference: https://www.analog.com/media/en/technical-documentation/data-sheets/AD1986A.pdf (Pages 31/32)
+
+                We will leave an ERROR() check here in case the QEMU AC97 ever returns a different value, so that
+                more code can be added to properly handle the extra configuration options.
+                */
+                if (caps != 0x0809)
+                {
+                    ERROR("Extended capabilities register indicates features that have not been implemented in software!\n");
+                    return -1;
+                }
+
+                /* Initialize our sample rates list */
+                INIT_LIST_HEAD(&state->sample_rates_list);
+
+                // First bit indicates variable rate audio is supported; we must enable it then probe for all supported 
+                // sample rates to fill out our sample rates list. If it isn't supported, just ask the device for the 
+                // default rate and add that to the list. 
+                if (caps & 0x0001) {
+                    DEBUG("Enabling variable rate audio support...\n");
+                    OUTW(0x0001, state->ioport_start_bar0 + AC97_NAM_EXT_FUNC_EN);
+                    // probe_variable_sample_rates(state);
+                } else {
+                    DEBUG("Asking the AC97 for its default sample rate...\n");
+                    uint16_t default_rate = INW(state->ioport_start_bar0 + AC97_NAM_DAC_RATE); // will be same as value from AC97_NAM_ADC_RATE register
+                    struct ac97_sample_rate* rate = (struct ac97_sample_rate*) malloc(sizeof(struct ac97_sample_rate));
+                    if (!rate) {
+                        ERROR("Could not allocate AC97 Sample Rate struct!\n");
+                        return -1;
+                    }
+                    rate->rate = default_rate;
+                    list_add(&rate->node, &state->sample_rates_list);
+                }
+                /*
+                // Print supported rates to the debug console
+                struct list_head *currate;
+                list_for_each(currate, &state->sample_rates_list) {
+                    struct ac97_sample_rate *rate = list_entry(currate, struct ac97_sample_rate, node);
+                    DEBUG("AC97 supports sampling at %d Hz", rate->rate);
+                }
+                */
 
                 /* Allow device to use DMA */
                 uint16_t old_cmd = pci_cfg_readw(bus->num, pdev->num, 0, 0x4);
