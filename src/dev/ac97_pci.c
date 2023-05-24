@@ -275,7 +275,7 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     nk_sound_dev_scale_t allowed_scales;
 
     // The AC97 can support up to 1 input stream. The user application must support mixing. 
-    struct nk_sound_dev_stream stream;
+    struct nk_sound_dev_stream* stream;
 
     // TODO: What else do we need to add?
 };
@@ -442,6 +442,15 @@ static struct nk_sound_dev_int ops = {
     .close_stream = NULL
 };
 
+static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_params *params)
+{
+    /*
+    Modifies the registers of the AC97 to configure the stream parameters found in 'params'
+    */
+    
+    return;
+}
+
 int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], uint32_t params_size)
 {
     /*
@@ -454,7 +463,7 @@ int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], u
     by this function. Or, if 'params' is too small, the user can learn how large it should be. 
     */
 
-    struct ac97_state* ac_state = (struct ac97_state*) state; // cast void* to struct ac97_state*
+    struct ac97_state *ac_state = (struct ac97_state*) state; // cast void* to struct ac97_state*
 
     // AC97 may support 16 bit audio OR 16 and 20 bit audio. 
     int n_res_options = (ac_state->max_resolution == 16) ? 1 : 2;
@@ -477,7 +486,38 @@ int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], u
     return -1; // TODO: return the number of filled options instead!
 }
 
-static void probe_variable_sample_rates(struct ac97_state *state) {
+struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_params *params)
+{
+    /*
+    Opens a stream between the AC97 device and the caller. The AC97 can only support a single stream at
+    a time.
+    */
+
+    struct ac97_state *ac_state = (struct ac97_state*) state;
+    if(ac_state->stream) // 'stream' is initialized to NULL in ac97_pci_init() or upon a call to close_stream()
+    {
+        ERROR("Cannot open a second AC97 stream!\n");
+        return -1;
+    }
+
+    // allocate the stream object, it will be freed by ac97_close_stream
+    ac_state->stream = (struct nk_sound_dev_stream*) malloc(sizeof(struct nk_sound_dev_stream));
+    if (!ac_state->stream)
+    {
+        ERROR("Could not allocate nk_sound_dev_stream object!\n");
+        return -1;
+    }
+    ac_state->stream->stream_id = 0; // this field is not used by the AC97 since it can only support one stream
+    ac_state->stream->params = *params; // TODO: Should the device assume the parameters are sound, or should it validate them?
+    ac97_set_sound_params(ac_state, params); // only one stream, so configure its desired parameters
+
+    return ac_state->stream;
+}
+
+// TODO: Write close_stream, and have it free the stream object then set it explicitly to NULL 
+
+static void probe_variable_sample_rates(struct ac97_state *state)
+{
     /* According to Page 13 of https://www.analog.com/media/en/technical-documentation/data-sheets/AD1887.pdf, 
        the DAC/ADC rate registers allow programming of the sampling frequency from 7 kHz to 48 kHz in 1 Hz increments. 
        Programming a value outside that range causes the codec to saturate. For valid inputs, if the value written is supported,
@@ -504,7 +544,7 @@ static void probe_variable_sample_rates(struct ac97_state *state) {
             DEBUG("Requested rate %d was rejected!", curr_rate);
         }
         */
-       
+
         if (returned_rate != last_valid_rate)
         {
             struct ac97_sample_rate *rate = (struct ac97_sample_rate *)malloc(sizeof(struct ac97_sample_rate));
@@ -1026,18 +1066,22 @@ int ac97_pci_init(struct naut_info *naut)
                 OUTW(master_vol.val, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
                 OUTW(pcm_vol.val, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
+                /* Initialize a stream */
+                state->stream = NULL;
+
                 /* TODO: Write default volume parameters to a stream so they can be configured? */
 
-                dirty_state = state; // Remove this code when we can get sound working in a non-dirty way
 
                 /* TODO: Should the BDLs be initialized here? */
                 /* TODO: Initialize a stream with some defualt parameters for playing sound. */
 
-                 //if (!foundmem)
-                 //
-                 //    ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
-                 //    continue;
-                 //}
+                dirty_state = state; // TODO: Remove this code when we can get sound working in a non-dirty way
+
+                // if (!foundmem)
+                //
+                //     ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
+                //     continue;
+                // }
                 //DEBUG("AC97 device is now registered");
 
 
