@@ -563,20 +563,6 @@ static void probe_variable_sample_rates(struct ac97_state *state)
     }
 }
 
-static int print_bdl_out(struct ac97_state *state)
-{
-    /* 
-    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
-    */
-    DEBUG("Printing the contents of the PCM OUT BDL...\n");
-    for (int i = 0; i < BDL_MAX_SIZE; i++)
-    {
-        ac97_bdl_entry entry = OUT_ENTRY(i);
-        DEBUG("Entry %d: %016lx\n", i, entry.val);
-    }
-    return 0;
-}
-
 int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint16_t num_samples)
 {
     /* Recieves a pointer to a chunk of data in memory, and the size of the buffer.
@@ -639,6 +625,147 @@ int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint16_t num
 
     return 0;
 }
+
+int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
+                        uint8_t *src, uint64_t len,
+                        void (*callback)(nk_sound_dev_status_t status,
+                                         void *context),
+                        void *context) 
+{
+  DEBUG("Writing to stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+  //we don't care if stream param is null because there is only one stream in the AC97
+  /* if (!stream) {
+    ERROR("The stream pointer is null\n");
+    return -1;
+  } */
+
+  struct ac97_state *ac_state = (struct ac97_state*) state;
+  
+
+  if (!ac_state->stream) {
+    ERROR("Stream has not been opened yet\n");
+    return -1;
+  }
+
+  // initialize BDL
+  DEBUG("Writing data to BDL\n");
+  if (ac97_write_to_bdl(ac_state, src, len, callback, context)) {
+    ERROR("BDL write failed\n");
+    return -1;
+  }
+  DEBUG("Completed BDL write\n");
+
+  return 0;
+}
+
+
+//TODO: handle the usage of callbacks. Right now implementation is non blocking
+int ac97_write_to_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
+                        void (*callback)(nk_sound_dev_status_t status,
+                                         void *context),
+                        void *context )
+{
+
+    if(!src){
+        ERROR("The src pointer is null\n");
+        return -1;
+    }
+
+    if((*src & 1) != 0){
+        ERROR("The src address must be even\n");
+        return -1;
+    }
+
+    uint8_t n_available_buffers = BDL_MAX_SIZE - OUT_SIZE;
+
+    //assuming use of 16 bit samples, and len is given in number of bytes (a byte might get cutoff, should I use ceil here too?)
+    uint64_t n_samples = len / 2;
+    DEBUG("Total number of samples %d\n", n_samples);
+
+    //TODO: Fix,this will break when n_samples % bdl_entry_max_size = 0...ceil is like sin: returns itself.
+    uint8_t buffers_required =(uint8_t)  ( ((double) n_samples/ (double) BDL_ENTRY_MAX_SIZE)+ 1);
+    DEBUG("Buffers required: %d\n", buffers_required);
+
+    if(buffers_required > n_available_buffers){
+        ERROR("BDL does not have enough space for sound data, %d buffers required and %d open spots\n",buffers_required,n_available_buffers);
+        return -1;
+    }
+
+    //chopping up samples into buffer entries and placing them in bdl
+    for (int i = 0; i < buffers_required; i++) {
+            DEBUG("Buffer %d will be at address %x\n", i, (uint32_t)(src + (i * 0xFFFE)));
+            if (n_samples >= 0xFFFE){
+                 ac97_produce_out_buffer(state, src + (i * 0xFFFE), 0xFFFE); // TODO: Is alignment okay here? Seemed sketchy during OH
+                 n_samples -= 0xFFFE;
+            }
+            else{
+                ac97_produce_out_buffer(state,src + ((i*0xFFFE)), (uint16_t) n_samples);
+                n_samples = 0;
+            }    
+    }
+
+    return 0;
+
+
+
+}
+
+
+
+static int write_to_bdl_test(char *buf, void *priv)
+{
+    /* Adds nbuf full-length sine wave sound buffers playing sound at frequency freq */
+    uint64_t nBytes = 200000;
+    uint64_t freq = 261;
+
+    
+        DEBUG("Adding %d sound buffers playing a sine wave at frequency %d\n", nBytes, freq);
+
+        // Create one huge sine buffer
+        uint16_t *sine_buf = (uint16_t *) malloc(nBytes); // each sample is 2 bytes
+        if (!sine_buf) {
+            nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
+            return 0;
+        }
+        create_sine_wave(sine_buf, nBytes / 2, freq, 44100); // TODO: pull sampling freq from device state
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) sine_buf);
+
+
+        // produce using the write to bdl function
+        ac97_write_to_bdl(dirty_state,(uint8_t*) sine_buf,nBytes,NULL,NULL);
+        return 0;
+   
+    
+}
+
+static struct shell_cmd_impl write_to_bdl_impl = {
+    .cmd = "write_to_bdl",
+    .help_str = "write_to_bdl",
+    .handler = write_to_bdl_test,
+};
+nk_register_shell_cmd(write_to_bdl_impl);
+
+
+static int print_bdl_out(struct ac97_state *state)
+{
+    /* 
+    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
+    */
+    DEBUG("Printing the contents of the PCM OUT BDL...\n");
+    for (int i = 0; i < BDL_MAX_SIZE; i++)
+    {
+        ac97_bdl_entry entry = OUT_ENTRY(i);
+        DEBUG("Entry %d: %016lx\n", i, entry.val);
+    }
+    return 0;
+}
+
+
 
 int ac97_consume_out_buffer(struct ac97_state *state)
 {
@@ -741,7 +868,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         Test that the device properly manages the ring buffer state variables by playing
         continuous sound
         */
-        uint64_t buf_len = 0x1000;
+       /*  uint64_t buf_len = 0x1000;
         uint16_t *sine_buf = (uint16_t *) malloc(2 * buf_len); // each sample is 2 bytes
         if (!sine_buf)
         {
@@ -750,7 +877,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         }
         uint64_t tone_freq = (OUT_HEAD * (500 - 200) / (BDL_MAX_SIZE - 1)) + 200; // stepped frequency between 200 and 500
         create_sine_wave(sine_buf, buf_len, tone_freq, 44100); // TODO: pull sampling freq from device state
-        ac97_produce_out_buffer(state, sine_buf, 0x1000);
+        ac97_produce_out_buffer(state, sine_buf, 0x1000); */
     }
     else if (tr_stat.fifo_interrupt == 1) {
         DEBUG("Handling fifo error interrupt...\n");

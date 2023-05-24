@@ -72,7 +72,7 @@
 #include <nautilus/cmdline.h>
 #include <test/test.h>
 
-char *script[] = {"create_bdl", "add_sound_buffers 16 261", "add_sound_buffers 16 522", "consume_sound_buffers", 0}; // TODO: remove this script eventually
+//char *script[] = {"create_bdl", "add_sound_buffers 16 261", "add_sound_buffers 16 522", "consume_sound_buffers", 0}; // TODO: remove this script eventually
 
 #ifdef NAUT_CONFIG_ASPACES
 #include <nautilus/aspace.h>
@@ -583,7 +583,7 @@ init (unsigned long mbd,
     nk_watchdog_init(NAUT_CONFIG_WATCHDOG_DEFAULT_TIME_MS * 1000000UL);
 #endif
 
-    nk_launch_shell("root-shell",0,script,0); // replace 'script' with 0 eventually
+    nk_launch_shell("root-shell",0,0,0); // replace 'script' with 0 eventually
 
     runtime_init();
 
