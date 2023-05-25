@@ -569,11 +569,33 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
     ac_state->stream->stream_id = 0; // this field is not used by the AC97 since it can only support one stream
     ac_state->stream->params = *params; // TODO: Should the device assume the parameters are sound, or should it validate them?
     ac97_set_sound_params(ac_state, params); // only one stream, so configure its desired parameters
-
+    // init output bdl
+    if(ac97_init_output_bdl(ac_state) == -1){
+        return -1;
+    }
     return ac_state->stream;
 }
 
 // TODO: Write close_stream, and have it free the stream object then set it explicitly to NULL 
+
+void ac97_close_stream(void* state, struct nk_sound_dev_stream *stream){
+    /*
+    Frees all the malloced resources from open stream and ac97_init_output_bdl
+
+     CURRENTLY ERRORS WHEN CALLED (not in the function, calling the function itself causes the error)
+     ERROR is invalid opcode
+    */
+    struct ac97_state *ac_state = (struct ac97_state*) state;
+
+//     free stream and set to null
+
+    DEBUG("Deallocating the stream struct in device state\n");
+    free(ac_state->stream);
+    ac_state->stream = NULL;
+
+//     free bdl entries
+    ac97_deinit_output_bdl(ac_state);
+}
 
 static void probe_variable_sample_rates(struct ac97_state *state)
 {
@@ -970,7 +992,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
 static struct nk_sound_dev_int ops = {
         .get_available_modes = ac97_get_available_modes,
         .open_stream = ac97_open_stream,
-        .close_stream = NULL, //TODO: implement function
+        .close_stream = ac97_close_stream,
         .write_to_stream = NULL, //TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
         .read_from_stream = NULL, //TODO implement function
         .get_stream_params = NULL, //TODO: implement function
@@ -1681,6 +1703,7 @@ int test_ac97_abs()
         DEBUG("Opened stream with the following parameters:\nnum_of_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
               (global_control_register.chnl + 1) * 2,  sample_rate, global_control_register.out_mode ? 20 : 16);
     }
+//    nk_sound_dev_close_stream(ac97_device, ac97_stream);
 }
 
 static struct shell_cmd_impl test_ac97_abs_impl = {
