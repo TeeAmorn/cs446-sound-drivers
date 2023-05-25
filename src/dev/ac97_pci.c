@@ -222,6 +222,20 @@ struct ac97_nabm_desc                  // describes native audio bus registers
     } global_status;                   // describes global status register
 } __attribute__((packed));
 
+typedef union {
+    uint32_t val :24;
+    struct
+    {
+        uint8_t gie         : 1;       // global interrupt enable
+        uint8_t cr          : 1;       // cold reset
+        uint8_t wr          : 1;       // warm reset
+        uint8_t sd          : 1;       // shut down
+        uint16_t rsvd       : 16;      // reserved
+        uint8_t chnl        : 2;       // channels for pcm output
+        uint8_t out_mode    : 2;       // pcm output mode
+    }__attribute__((packed));          // describes global control register
+}__attribute__((packed)) global_control_register_t;
+
 typedef union 
 {
     uint8_t val;
@@ -230,6 +244,11 @@ typedef union
         uint8_t rsvd : 3;
     }__attribute__((packed));
 }__attribute__((packed)) last_valid_entry_t;
+
+typedef union
+{
+
+};
 
 struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an ac97_state? 
 {
@@ -431,27 +450,57 @@ static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t ton
 static struct list_head dev_list;
 static struct ac97_state *dirty_state; 
 
-static struct nk_sound_dev_int ops = {
-    .get_available_modes = NULL, //TODO: implement function
-    .open_stream = NULL, //TODO: implement function
-    .close_stream = NULL, //TODO: implement function
-    .write_to_stream = NULL, //TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
-    .read_from_stream = NULL, //TODO implement function
-    .get_stream_params = NULL, //TODO: implement function
-    .play_stream = NULL, //TODO: implement function
-    .close_stream = NULL
-};
+
 
 static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_params *params)
 {
     /*
     Modifies the registers of the AC97 to configure the stream parameters found in 'params'
     */
-    
+    // bar2 global control register 21:20 PCM output channels, 21:22 sample resolution
+    // TODO: set num channels, sample rate, sample resolution
+    uint16_t gcr_port = state->ioport_start_bar1 + AC97_NABM_CTRL;
+    global_control_register_t global_control_register;
+    global_control_register.val = INL(gcr_port);
+//    uint32_t test = INL(gcr_port);
+//    global_control_register.val = test;
+    switch(params->num_of_channels) {
+        case 2:
+            global_control_register.chnl = 0;
+            break;
+        case 4:
+            global_control_register.chnl = 1;
+            break;
+        case 6:
+            global_control_register.chnl = 2;
+            break;
+        default:
+            ERROR("Number of channels is not a valid value\n");
+    }
+
+    switch(params->sample_resolution) {
+        case NK_SOUND_DEV_SAMPLE_RESOLUTION_16:
+            global_control_register.out_mode = 0;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RESOLUTION_20:
+            global_control_register.out_mode = 1;
+            break;
+        default:
+            ERROR("Sample resolution is not a valid value\n");
+    }
+
+    // TODO: Write conditionals to handle sample resolution. Default = 48k
+    uint16_t DAC_port = state->ioport_start_bar0 + AC97_NAM_DAC_RATE;
+    uint16_t sample_rate = 0xBB80;
+    OUTW(sample_rate, DAC_port);
+    uint16_t returned_rate = INW(DAC_port);
+    if(sample_rate != returned_rate){
+        ERROR("Could not set provided sample rate");
+    }
     return;
 }
 
-int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], uint32_t params_size)
+int ac97_get_available_modes(struct nk_sound_dev *dev, struct nk_sound_dev_params params[], uint32_t params_size)
 {
     /*
     Given a pre-allocated array 'params' of size 'params_size', this function fills out the 'params' array
@@ -463,7 +512,7 @@ int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], u
     by this function. Or, if 'params' is too small, the user can learn how large it should be. 
     */
 
-    struct ac97_state *ac_state = (struct ac97_state*) state; // cast void* to struct ac97_state*
+    struct ac97_state *ac_state = dev->dev.state; // get struct ac97_state* from device struct
 
     // AC97 may support 16 bit audio OR 16 and 20 bit audio. 
     int n_res_options = (ac_state->max_resolution == 16) ? 1 : 2;
@@ -481,7 +530,15 @@ int ac97_get_available_modes(void* state, struct nk_sound_dev_params params[], u
        *num_options++;
     }
     */
-
+    // TODO: I am bootstrapping this function for the time being while we wait on clarification on how to handle sample rates
+    struct nk_sound_dev_params bootstrap_params;
+    bootstrap_params.type = NK_SOUND_DEV_OUTPUT_STREAM;
+    bootstrap_params.num_of_channels = 2;
+    bootstrap_params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
+    bootstrap_params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
+    bootstrap_params.scale = NK_SOUND_DEV_SCALE_LOGARITHMIC;
+    params[0] = bootstrap_params;
+    return 1;
     ERROR("This function has not been finished!\n");
     return -1; // TODO: return the number of filled options instead!
 }
@@ -494,13 +551,15 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
     */
 
     struct ac97_state *ac_state = (struct ac97_state*) state;
+
     if(ac_state->stream) // 'stream' is initialized to NULL in ac97_pci_init() or upon a call to close_stream()
     {
+        DEBUG("Stream value: %d\n", ac_state->stream);
         ERROR("Cannot open a second AC97 stream!\n");
         return -1;
     }
 
-    // allocate the stream object, it will be freed by ac97_close_stream
+//     allocate the stream object, it will be freed by ac97_close_stream
     ac_state->stream = (struct nk_sound_dev_stream*) malloc(sizeof(struct nk_sound_dev_stream));
     if (!ac_state->stream)
     {
@@ -908,6 +967,17 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     return 0;
 }
 
+static struct nk_sound_dev_int ops = {
+        .get_available_modes = ac97_get_available_modes,
+        .open_stream = ac97_open_stream,
+        .close_stream = NULL, //TODO: implement function
+        .write_to_stream = NULL, //TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
+        .read_from_stream = NULL, //TODO implement function
+        .get_stream_params = NULL, //TODO: implement function
+        .play_stream = NULL, //TODO: implement function
+        .close_stream = NULL
+};
+
 int ac97_pci_init(struct naut_info *naut)
 {
     struct pci_info *pci = naut->sys.pci;
@@ -1214,177 +1284,6 @@ int ac97_pci_init(struct naut_info *naut)
 
                 // // now bring up the device / interrupts
 
-                // // disable interrupts
-                // WRITE_MEM(state, E1000E_IMC_OFFSET, 0xffffffff);
-                // DEBUG("init fn: device reset\n");
-                // WRITE_MEM(state, E1000E_CTRL_OFFSET, E1000E_CTRL_RST);
-                // // delay about 5 us (manual suggests 1us)
-                // udelay(RESTART_DELAY);
-                // // disable interrupts again after reset
-                // WRITE_MEM(state, E1000E_IMC_OFFSET, 0xffffffff);
-
-                // uint32_t mac_high = READ_MEM(state, E1000E_RAH_OFFSET);
-                // uint32_t mac_low = READ_MEM(state, E1000E_RAL_OFFSET);
-                // uint64_t mac_all = ((uint64_t)mac_low + ((uint64_t)mac_high << 32)) & 0xffffffffffff;
-                // DEBUG("init fn: mac_all = 0x%lX\n", mac_all);
-                // DEBUG("init fn: mac_high = 0x%x mac_low = 0x%x\n", mac_high, mac_low);
-
-                // memcpy((void *)state->mac_addr, &mac_all, MAC_LEN);
-
-                // // set the bit 22th of GCR register
-                // uint32_t gcr_old = READ_MEM(state, E1000E_GCR_OFFSET);
-                // WRITE_MEM(state, E1000E_GCR_OFFSET, gcr_old | E1000E_GCR_B22);
-                // uint32_t gcr_new = READ_MEM(state, E1000E_GCR_OFFSET);
-                // DEBUG("init fn: GCR = 0x%08x old gcr = 0x%08x tested %s\n",
-                //       gcr_new, gcr_old,
-                //       gcr_new & E1000E_GCR_B22 ? "pass" : "fail");
-                // WRITE_MEM(state, E1000E_GCR_OFFSET, E1000E_GCR_B22);
-
-                // WRITE_MEM(state, E1000E_FCAL_OFFSET, 0);
-                // WRITE_MEM(state, E1000E_FCAH_OFFSET, 0);
-                // WRITE_MEM(state, E1000E_FCT_OFFSET, 0);
-
-                // // uint32_t ctrl_reg = (E1000E_CTRL_FD | E1000E_CTRL_FRCSPD | E1000E_CTRL_FRCDPLX | E1000E_CTRL_SLU | E1000E_CTRL_SPEED_1G) & ~E1000E_CTRL_ILOS;
-                // // p50 manual
-                // uint32_t ctrl_reg = E1000E_CTRL_SLU | E1000E_CTRL_RFCE | E1000E_CTRL_TFCE;
-
-                // WRITE_MEM(state, E1000E_CTRL_OFFSET, ctrl_reg);
-
-                // DEBUG("init fn: e1000e ctrl = 0x%08x expects 0x%08x\n",
-                //       READ_MEM(state, E1000E_CTRL_OFFSET),
-                //       ctrl_reg);
-
-                // uint32_t status_reg = READ_MEM(state, E1000E_STATUS_OFFSET);
-                // DEBUG("init fn: e1000e status = 0x%08x\n", status_reg);
-                // DEBUG("init fn: does status.fd = 0x%01x? %s\n",
-                //       E1000E_STATUS_FD,
-                //       status_reg & E1000E_STATUS_FD ? "full deplex" : "halt deplex");
-                // DEBUG("init fn: status.speed 0x%02x %s\n",
-                //       e1000e_read_speed_bit(status_reg, E1000E_STATUS_SPEED_MASK,
-                //                             E1000E_STATUS_SPEED_SHIFT),
-                //       e1000e_read_speed_char(status_reg, E1000E_STATUS_SPEED_MASK,
-                //                              E1000E_STATUS_SPEED_SHIFT));
-
-                // DEBUG("init fn: status.asdv 0x%02x %s\n",
-                //       e1000e_read_speed_bit(status_reg,
-                //                             E1000E_STATUS_ASDV_MASK,
-                //                             E1000E_STATUS_ASDV_SHIFT),
-                //       e1000e_read_speed_char(status_reg,
-                //                              E1000E_STATUS_ASDV_MASK,
-                //                              E1000E_STATUS_ASDV_SHIFT));
-
-                // if (e1000e_read_speed_bit(status_reg, E1000E_STATUS_SPEED_MASK, E1000E_STATUS_SPEED_SHIFT) != e1000e_read_speed_bit(status_reg, E1000E_STATUS_ASDV_MASK, E1000E_STATUS_ASDV_SHIFT))
-                // {
-                //     ERROR("init fn: setting speed and detecting speed do not match!!!\n");
-                // }
-
-                // DEBUG("init fn: status.lu 0x%01x %s\n",
-                //       (status_reg & E1000E_STATUS_LU) >> 1,
-                //       (status_reg & E1000E_STATUS_LU) ? "link is up." : "link is down.");
-                // DEBUG("init fn: status.phyra %s Does the device require PHY initialization?\n",
-                //       status_reg & E1000E_STATUS_PHYRA ? "1 Yes" : "0 No");
-
-                // DEBUG("init fn: init receive ring\n");
-                // e1000e_init_receive_ring(state);
-                // DEBUG("init fn: init transmit ring\n");
-                // e1000e_init_transmit_ring(state);
-
-                // WRITE_MEM(state, E1000E_IMC_OFFSET, 0);
-                // DEBUG("init fn: IMC = 0x%08x expects 0x%08x\n",
-                //       READ_MEM(state, E1000E_IMC_OFFSET), 0);
-
-                // DEBUG("init fn: interrupt driven\n");
-
-                // if (pdev->msi.type == PCI_MSI_NONE)
-                // {
-                //     ERROR("Device %s does not support MSI - skipping\n", state->name);
-                //     continue;
-                // }
-
-                // uint64_t num_vecs = pdev->msi.num_vectors_needed;
-                // uint64_t base_vec = 0;
-
-                // if (idt_find_and_reserve_range(num_vecs, 1, &base_vec))
-                // {
-                //     ERROR("Cannot find %d vectors for %s - skipping\n", num_vecs, state->name);
-                //     continue;
-                // }
-
-                // DEBUG("%s vectors are %d..%d\n", state->name, base_vec, base_vec + num_vecs - 1);
-
-                // if (pci_dev_enable_msi(pdev, base_vec, num_vecs, 0))
-                // {
-                //     ERROR("Failed to enable MSI for device %s - skipping\n", state->name);
-                //     continue;
-                // }
-
-                // int i;
-                // int failed = 0;
-
-                // for (i = base_vec; i < (base_vec + num_vecs); i++)
-                // {
-                //     if (register_int_handler(i, e1000e_irq_handler, state))
-                //     {
-                //         ERROR("Failed to register handler for vector %d on device %s - skipping\n", i, state->name);
-                //         failed = 1;
-                //         break;
-                //     }
-                // }
-
-                // if (!failed)
-                // {
-                //     for (i = base_vec; i < (base_vec + num_vecs); i++)
-                //     {
-                //         if (pci_dev_unmask_msi(pdev, i))
-                //         {
-                //             ERROR("Failed to unmask interrupt %d for device %s\n", i, state->name);
-                //             failed = 1;
-                //             break;
-                //         }
-                //     }
-                // }
-
-                // if (!failed)
-                // {
-                //     // interrupts should now be occuring
-
-                //     // now configure device
-                //     // interrupt delay value = 0 -> does not delay
-                //     WRITE_MEM(state, E1000E_TIDV_OFFSET, 0);
-                //     // receive interrupt delay timer = 0
-                //     // -> interrupt when the device receives a package
-                //     WRITE_MEM(state, E1000E_RDTR_OFFSET_NEW, E1000E_RDTR_FPD);
-                //     DEBUG("init fn: RDTR new 0x%08x alias 0x%08x expect 0x%08x\n",
-                //           READ_MEM(state, E1000E_RDTR_OFFSET_NEW),
-                //           READ_MEM(state, E1000E_RDTR_OFFSET_ALIAS),
-                //           E1000E_RDTR_FPD);
-                //     WRITE_MEM(state, E1000E_RADV_OFFSET, 0);
-
-                //     // enable only transmit descriptor written back, receive interrupt timer
-                //     // rx queue 0
-                //     uint32_t ims_reg = 0;
-                //     ims_reg = E1000E_ICR_TXDW | E1000E_ICR_TXQ0 | E1000E_ICR_RXT0 | E1000E_ICR_RXQ0;
-                //     WRITE_MEM(state, E1000E_IMS_OFFSET, ims_reg);
-                //     state->ims_reg = ims_reg;
-                //     e1000e_interpret_ims(state);
-                //     // after the interrupt is turned on, the interrupt handler is called
-                //     // due to the transmit descriptor queue empty.
-
-                //     uint32_t icr_reg = READ_MEM(state, E1000E_ICR_OFFSET);
-                //     // e1000e_interpret_ims(state);
-                //     DEBUG("init fn: ICR before writting with 0xffffffff\n");
-                //     // e1000e_interpret_icr(state);
-                //     WRITE_MEM(state, E1000E_ICR_OFFSET, 0xffffffff);
-                //     // e1000e_interpret_icr(state);
-                //     DEBUG("init fn: finished writting ICR with 0xffffffff\n");
-
-                //     // optimization
-                //     WRITE_MEM(state, E1000E_AIT_OFFSET, 0);
-                //     WRITE_MEM(state, E1000E_TADV_OFFSET, 0);
-                //     DEBUG("init fn: end init fn --------------------\n");
-
-                //     INFO("%s operational\n", state->name);
-                //}
             }
         }
     }
@@ -1741,736 +1640,53 @@ int ac97_pci_deinit()
 }
 
 
-// // initialize the tx ring buffer to store transmit descriptors
-// static int e1000e_init_transmit_ring(struct e1000e_state *state)
-// {
-//     TXMAP = malloc(sizeof(struct e1000e_map_ring));
-//     if (!TXMAP)
-//     {
-//         ERROR("Cannot allocate txmap\n");
-//         return -1;
-//     }
-//     memset(TXMAP, 0, sizeof(struct e1000e_map_ring));
-//     TXMAP->ring_len = TX_DSC_COUNT;
+int test_ac97_abs()
+{
+    DEBUG("\n\n\nTESTING AC97 DEVICE THROUGH ABSTRACTION LAYER\n\n\n");
+    // Find ac97 device
+    struct nk_sound_dev* ac97_device = nk_sound_dev_find("ac97-0");
+    if (ac97_device == 0)
+    {
+        DEBUG("No device found\n");
+        return -1;
+    }else{
+        DEBUG("Found Device: %s\n", ac97_device->dev.name);
+    }
+
+    //Query stream params
+    struct nk_sound_dev_params params[2];
+    uint32_t params_size = 2;
+    int num_entries = nk_sound_dev_get_available_modes(ac97_device, params, params_size);
+    if(num_entries == -1){
+        DEBUG("Could not retrieve stream params\n");
+        return -1;
+    }else{
+        for(int i=0; i<num_entries; i++) {
+            DEBUG("AC97 stream params\ntype: %d\nnum_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
+                  params[i].type, params[i].num_of_channels, params[i].sample_rate, params[i].sample_resolution);
+        }
+    }
+    // Open stream
+    struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, params);
+    if (ac97_stream == -1){
+        DEBUG("Could not open stream\n");
+        return -1;
+    }else{
+        struct ac97_state *state = ac97_device->dev.state;
+        uint16_t gcr_port = state->ioport_start_bar1 + AC97_NABM_CTRL;
+        global_control_register_t global_control_register;
+        global_control_register.val = INL(gcr_port);
+        uint16_t DAC_port = state->ioport_start_bar0 + AC97_NAM_DAC_RATE;
+        uint16_t sample_rate = INW(DAC_port);
+        DEBUG("Opened stream with the following parameters:\nnum_of_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
+              (global_control_register.chnl + 1) * 2,  sample_rate, global_control_register.out_mode ? 20 : 16);
+    }
+}
+
+static struct shell_cmd_impl test_ac97_abs_impl = {
+        .cmd = "test_ac97_abs",
+        .help_str = "Test interacting with the ac97 device through the abstraction layer",
+        .handler = test_ac97_abs,
+};
+nk_register_shell_cmd(test_ac97_abs_impl);
 
-//     TXMAP->map_ring = malloc(sizeof(struct e1000e_fn_map) * TX_DSC_COUNT);
-//     if (!TXMAP->map_ring)
-//     {
-//         ERROR("Cannot allocate txmap->ring\n");
-//         return -1;
-//     }
-//     memset(TXMAP->map_ring, 0, sizeof(struct e1000e_fn_map) * TX_DSC_COUNT);
-
-//     TXD_RING = malloc(sizeof(struct e1000e_desc_ring));
-//     if (!TXD_RING)
-//     {
-//         ERROR("Cannot allocate TXD_RING\n");
-//         return -1;
-//     }
-//     memset(TXD_RING, 0, sizeof(struct e1000e_desc_ring));
-
-//     // allocate TX_DESC_COUNT transmit descriptors in the ring buffer.
-//     TXD_RING_BUFFER = malloc(sizeof(struct e1000e_tx_desc) * TX_DSC_COUNT);
-//     if (!TXD_RING_BUFFER)
-//     {
-//         ERROR("Cannot allocate TXD_RING_BUFFER\n");
-//         return -1;
-//     }
-//     memset(TXD_RING_BUFFER, 0, sizeof(struct e1000e_tx_desc) * TX_DSC_COUNT);
-//     TXD_COUNT = TX_DSC_COUNT;
-
-//     // store the address of the memory in TDBAL/TDBAH
-//     WRITE_MEM(state, E1000E_TDBAL_OFFSET,
-//               (uint32_t)(0x00000000ffffffff & (uint64_t)TXD_RING_BUFFER));
-//     WRITE_MEM(state, E1000E_TDBAH_OFFSET,
-//               (uint32_t)((0xffffffff00000000 & (uint64_t)TXD_RING_BUFFER) >> 32));
-//     DEBUG("TXD_RING_BUFFER=0x%p, TDBAH=0x%08x, TDBAL=0x%08x\n",
-//           TXD_RING_BUFFER,
-//           READ_MEM(state, E1000E_TDBAH_OFFSET),
-//           READ_MEM(state, E1000E_TDBAL_OFFSET));
-
-//     // write tdlen: transmit descriptor length
-//     WRITE_MEM(state, E1000E_TDLEN_OFFSET,
-//               sizeof(struct e1000e_tx_desc) * TX_DSC_COUNT);
-
-//     // write the tdh, tdt with 0
-//     WRITE_MEM(state, E1000E_TDT_OFFSET, 0);
-//     WRITE_MEM(state, E1000E_TDH_OFFSET, 0);
-//     DEBUG("init tx fn: TDLEN = 0x%08x, TDH = 0x%08x, TDT = 0x%08x\n",
-//           READ_MEM(state, E1000E_TDLEN_OFFSET),
-//           READ_MEM(state, E1000E_TDH_OFFSET),
-//           READ_MEM(state, E1000E_TDT_OFFSET));
-
-//     TXD_PREV_HEAD = 0;
-//     TXD_TAIL = 0;
-
-//     // TCTL Reg: EN = 1b, PSP = 1b, CT = 0x0f (16d), COLD = 0x3F (63d)
-//     uint32_t tctl_reg = E1000E_TCTL_EN | E1000E_TCTL_PSP | E1000E_TCTL_CT | E1000E_TCTL_COLD_FD;
-//     WRITE_MEM(state, E1000E_TCTL_OFFSET, tctl_reg);
-//     DEBUG("init tx fn: TCTL = 0x%08x expects 0x%08x\n",
-//           READ_MEM(state, E1000E_TCTL_OFFSET),
-//           tctl_reg);
-
-//     // TXDCTL Reg: set WTHRESH = 1b, GRAN = 1b,
-//     // other fields = 0b except bit 22th = 1b
-//     WRITE_MEM(state, E1000E_TXDCTL_OFFSET,
-//               E1000E_TXDCTL_GRAN | E1000E_TXDCTL_WTHRESH | (1 << 22));
-//     // write tipg register
-//     // 00,00 0000 0110,0000 0010 00,00 0000 1010 = 0x0060200a
-//     // will be zero when emulating hardware
-//     WRITE_MEM(state, E1000E_TIPG_OFFSET,
-//               E1000E_TIPG_IPGT | E1000E_TIPG_IPGR1 | E1000E_TIPG_IPGR2);
-//     DEBUG("init tx fn: TIPG = 0x%08x expects 0x%08x\n",
-//           READ_MEM(state, E1000E_TIPG_OFFSET),
-//           E1000E_TIPG_IPGT | E1000E_TIPG_IPGR1 | E1000E_TIPG_IPGR2);
-//     return 0;
-// }
-
-// static int e1000e_set_receive_buffer_size(struct e1000e_state *state, uint32_t buffer_size)
-// {
-//     if (state->rx_buffer_size != buffer_size)
-//     {
-//         uint32_t rctl = READ_MEM(state, E1000E_RCTL_OFFSET) & E1000E_RCTL_BSIZE_MASK;
-//         switch (buffer_size)
-//         {
-//         case E1000E_RECV_BSIZE_256:
-//             rctl |= E1000E_RCTL_BSIZE_256;
-//             break;
-//         case E1000E_RECV_BSIZE_512:
-//             rctl |= E1000E_RCTL_BSIZE_512;
-//             break;
-//         case E1000E_RECV_BSIZE_1024:
-//             rctl |= E1000E_RCTL_BSIZE_1024;
-//             break;
-//         case E1000E_RECV_BSIZE_2048:
-//             rctl |= E1000E_RCTL_BSIZE_2048;
-//             break;
-//         case E1000E_RECV_BSIZE_4096:
-//             rctl |= E1000E_RCTL_BSIZE_4096;
-//             break;
-//         case E1000E_RECV_BSIZE_8192:
-//             rctl |= E1000E_RCTL_BSIZE_8192;
-//             break;
-//         case E1000E_RECV_BSIZE_16384:
-//             rctl |= E1000E_RCTL_BSIZE_16384;
-//             break;
-//         default:
-//             ERROR("e1000e receive pkt fn: unmatch buffer size\n");
-//             return -1;
-//         }
-//         WRITE_MEM(state, E1000E_RCTL_OFFSET, rctl);
-//         state->rx_buffer_size = buffer_size;
-//     }
-//     return 0;
-// }
-
-// // initialize the rx ring buffer to store receive descriptors
-// static int e1000e_init_receive_ring(struct e1000e_state *state)
-// {
-//     RXMAP = malloc(sizeof(struct e1000e_map_ring));
-//     if (!RXMAP)
-//     {
-//         ERROR("Cannot allocate rxmap\n");
-//         return -1;
-//     }
-//     memset(RXMAP, 0, sizeof(struct e1000e_map_ring));
-
-//     RXMAP->map_ring = malloc(sizeof(struct e1000e_fn_map) * RX_DSC_COUNT);
-//     if (!RXMAP->map_ring)
-//     {
-//         ERROR("Cannot allocate rxmap->ring\n");
-//         return -1;
-//     }
-//     memset(RXMAP->map_ring, 0, sizeof(struct e1000e_fn_map) * RX_DSC_COUNT);
-//     RXMAP->ring_len = RX_DSC_COUNT;
-
-//     RXD_RING = malloc(sizeof(struct e1000e_desc_ring));
-//     if (!RXD_RING)
-//     {
-//         ERROR("Cannot allocate rxd_ring buffer\n");
-//         return -1;
-//     }
-//     memset(RXD_RING, 0, sizeof(struct e1000e_desc_ring));
-
-//     // the number of the receive descriptor in the ring
-//     RXD_COUNT = RX_DSC_COUNT;
-
-//     // allocate the receive descriptor ring buffer
-//     uint32_t rx_desc_size = sizeof(struct e1000e_rx_desc) * RX_DSC_COUNT;
-//     RXD_RING_BUFFER = malloc(rx_desc_size);
-//     if (!RXD_RING_BUFFER)
-//     {
-//         ERROR("Cannot allocate RXD_RING_BUFFER\n");
-//         return -1;
-//     }
-//     memset(RXD_RING_BUFFER, 0, rx_desc_size);
-
-//     // store the address of the memory in TDBAL/TDBAH
-//     WRITE_MEM(state, E1000E_RDBAL_OFFSET,
-//               (uint32_t)(0x00000000ffffffff & (uint64_t)RXD_RING_BUFFER));
-//     WRITE_MEM(state, E1000E_RDBAH_OFFSET,
-//               (uint32_t)((0xffffffff00000000 & (uint64_t)RXD_RING_BUFFER) >> 32));
-//     DEBUG("init rx fn: RDBAH = 0x%08x, RDBAL = 0x%08x = rd_buffer\n",
-//           READ_MEM(state, E1000E_RDBAH_OFFSET),
-//           READ_MEM(state, E1000E_RDBAL_OFFSET));
-//     DEBUG("init rx fn: rd_buffer = 0x%016lx\n", RXD_RING_BUFFER);
-
-//     // write rdlen
-//     WRITE_MEM(state, E1000E_RDLEN_OFFSET, rx_desc_size);
-//     DEBUG("init rx fn: RDLEN=0x%08x should be 0x%08x\n",
-//           READ_MEM(state, E1000E_RDLEN_OFFSET), rx_desc_size);
-
-//     // write the rdh, rdt with 0
-//     WRITE_MEM(state, E1000E_RDH_OFFSET, 0);
-//     WRITE_MEM(state, E1000E_RDT_OFFSET, 0);
-//     DEBUG("init rx fn: RDH=0x%08x, RDT=0x%08x expects 0\n",
-//           READ_MEM(state, E1000E_RDH_OFFSET),
-//           READ_MEM(state, E1000E_RDT_OFFSET));
-//     RXD_PREV_HEAD = 0;
-//     RXD_TAIL = 0;
-
-//     WRITE_MEM(state, E1000E_RXDCTL_OFFSET,
-//               E1000E_RXDCTL_GRAN | E1000E_RXDCTL_WTHRESH);
-//     DEBUG("init rx fn: RXDCTL=0x%08x expects 0x%08x\n",
-//           READ_MEM(state, E1000E_RXDCTL_OFFSET),
-//           E1000E_RXDCTL_GRAN | E1000E_RXDCTL_WTHRESH);
-
-//     // write rctl register specifing the receive mode
-//     uint32_t rctl_reg = E1000E_RCTL_EN | E1000E_RCTL_SBP | E1000E_RCTL_UPE | E1000E_RCTL_LPE | E1000E_RCTL_DTYP_LEGACY | E1000E_RCTL_BAM | E1000E_RCTL_RDMTS_HALF | E1000E_RCTL_PMCF;
-
-//     // receive buffer threshold and size
-//     WRITE_MEM(state, E1000E_RCTL_OFFSET, rctl_reg);
-
-//     // set the receive packet buffer size
-//     e1000e_set_receive_buffer_size(state, RX_PACKET_BUFFER_SIZE);
-
-//     DEBUG("init rx fn: RCTL=0x%08x expects  0x%08x\n",
-//           READ_MEM(state, E1000E_RCTL_OFFSET),
-//           rctl_reg);
-//     return 0;
-// }
-
-// static int e1000e_send_packet(uint8_t *packet_addr,
-//                               uint64_t packet_size,
-//                               struct e1000e_state *state)
-// {
-//     DEBUG("send pkt fn: pkt_addr 0x%p pkt_size: %d\n", packet_addr, packet_size);
-
-//     DEBUG("send pkt fn: before sending TDH = %d TDT = %d tail_pos = %d\n",
-//           READ_MEM(state, E1000E_TDH_OFFSET),
-//           READ_MEM(state, E1000E_TDT_OFFSET),
-//           TXD_TAIL);
-//     DEBUG("send pkt fn: tpt total packet transmit: %d\n",
-//           READ_MEM(state, E1000E_TPT_OFFSET));
-
-//     if (packet_size > MAX_TU)
-//     {
-//         ERROR("send pkt fn: packet is too large.\n");
-//         return -1;
-//     }
-
-//     memset(((struct e1000e_tx_desc *)TXD_RING_BUFFER + TXD_TAIL),
-//            0, sizeof(struct e1000e_tx_desc));
-//     TXD_ADDR(TXD_TAIL) = (uint64_t *)packet_addr;
-//     TXD_LENGTH(TXD_TAIL) = packet_size;
-//     // set up send flags
-//     // TXD_CMD(TXD_TAIL).bit.dext = 0;
-//     // TXD_CMD(TXD_TAIL).bit.vle = 0;
-//     // TXD_CMD(TXD_TAIL).bit.ifcs = 1;
-//     // // set the end of packet flag if this is the last fragment
-//     // TXD_CMD(TXD_TAIL).bit.eop = 1;
-//     // // interrupt delay enable
-//     // // if ide = 0 and rs = 1, the transmit interrupt will occur immediately
-//     // // after the packet is sent.
-//     // TXD_CMD(TXD_TAIL).bit.ide = 0;
-//     // // report the status of the descriptor
-//     // TXD_CMD(TXD_TAIL).bit.rs = 1;
-//     TXD_CMD(TXD_TAIL).byte = E1000E_TXD_CMD_EOP | E1000E_TXD_CMD_IFCS | E1000E_TXD_CMD_RS;
-
-//     // increment transmit descriptor list tail by 1
-//     DEBUG("send pkt fn: moving the tail\n");
-//     TXD_TAIL = TXD_INC(1, TXD_TAIL);
-//     WRITE_MEM(state, E1000E_TDT_OFFSET, TXD_TAIL);
-//     DEBUG("send pkt fn: after moving tail TDH = %d TDT = %d tail_pos = %d\n",
-//           READ_MEM(state, E1000E_TDH_OFFSET),
-//           READ_MEM(state, E1000E_TDT_OFFSET),
-//           TXD_TAIL);
-
-//     DEBUG("send pkt fn: transmit error %d\n",
-//           TXD_STATUS(TXD_PREV_HEAD).ec | TXD_STATUS(TXD_PREV_HEAD).lc);
-
-//     DEBUG("send pkt fn: txd cmd.rs = %d status.dd = %d\n",
-//           TXD_CMD(TXD_PREV_HEAD).bit.rs,
-//           TXD_STATUS(TXD_PREV_HEAD).dd);
-
-//     DEBUG("send pkt fn: tpt total packet transmit: %d\n",
-//           READ_MEM(state, E1000E_TPT_OFFSET));
-
-//     // uint32_t status_pci = pci_cfg_readw(state->bus_num, state->pci_dev->num,
-//     //                                     0, E1000E_PCI_STATUS_OFFSET);
-//     // DEBUG("send pkt fn: status_pci 0x%04x int %d\n",
-//     //       status_pci, status_pci & E1000E_PCI_STATUS_INT);
-//     return 0;
-// }
-
-// static void e1000e_disable_receive(struct e1000e_state *state)
-// {
-//     uint32_t rctl_reg = READ_MEM(state, E1000E_RCTL_OFFSET);
-//     rctl_reg &= ~E1000E_RCTL_EN;
-//     WRITE_MEM(state, E1000E_RCTL_OFFSET, rctl_reg);
-//     return;
-// }
-
-// static void e1000e_enable_receive(struct e1000e_state *state)
-// {
-//     uint32_t rctl_reg = READ_MEM(state, E1000E_RCTL_OFFSET);
-//     rctl_reg |= E1000E_RCTL_EN;
-//     WRITE_MEM(state, E1000E_RCTL_OFFSET, rctl_reg);
-//     return;
-// }
-
-// static int e1000e_receive_packet(uint8_t *buffer,
-//                                  uint64_t buffer_size,
-//                                  struct e1000e_state *state)
-// {
-//     DEBUG("e1000e receive packet fn: buffer = 0x%p, len = %lu\n",
-//           buffer, buffer_size);
-//     DEBUG("e1000e receive pkt fn: before moving tail head: %d, tail: %d\n",
-//           READ_MEM(state, E1000E_RDH_OFFSET),
-//           READ_MEM(state, E1000E_RDT_OFFSET));
-
-//     memset(((struct e1000e_rx_desc *)RXD_RING_BUFFER + RXD_TAIL),
-//            0, sizeof(struct e1000e_rx_desc));
-
-//     RXD_ADDR(RXD_TAIL) = (uint64_t *)buffer;
-
-//     RXD_TAIL = RXD_INC(RXD_TAIL, 1);
-//     WRITE_MEM(state, E1000E_RDT_OFFSET, RXD_TAIL);
-
-//     DEBUG("e1000e receive pkt fn: after moving tail head: %d, prev_head: %d tail: %d\n",
-//           READ_MEM(state, E1000E_RDH_OFFSET),
-//           RXD_PREV_HEAD,
-//           READ_MEM(state, E1000E_RDT_OFFSET));
-
-//     return 0;
-// }
-
-// static uint64_t e1000e_packet_size_to_buffer_size(uint64_t sz)
-// {
-//     if (sz < E1000E_RECV_BSIZE_MIN)
-//     {
-//         // set the minimum packet size to 256 bytes
-//         return E1000E_RECV_BSIZE_MIN;
-//     }
-//     // Round up the number to the buffer size with power of two
-//     // In E1000E, the packet buffer is the power of two.
-//     // citation: https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-//     sz--;
-//     sz |= sz >> 1;
-//     sz |= sz >> 2;
-//     sz |= sz >> 4;
-//     sz |= sz >> 8;
-//     sz |= sz >> 16;
-//     sz |= sz >> 32;
-//     sz++;
-//     // if the size is larger than the maximun buffer size, return the largest size.
-//     if (sz >= E1000E_RECV_BSIZE_MAX)
-//     {
-//         return E1000E_RECV_BSIZE_MAX;
-//     }
-//     else
-//     {
-//         return sz;
-//     }
-// }
-
-// static int e1000e_get_characteristics(void *vstate, struct nk_net_dev_characteristics *c)
-// {
-//     if (!vstate)
-//     {
-//         ERROR("The device state pointer is null\n");
-//         return -1;
-//     }
-
-//     if (!c)
-//     {
-//         ERROR("The characteristics pointer is null\n");
-//         return -1;
-//     }
-
-//     struct e1000e_state *state = (struct e1000e_state *)vstate;
-//     memcpy(c->mac, (void *)state->mac_addr, MAC_LEN);
-//     // minimum and the maximum transmission unit
-//     c->min_tu = MIN_TU;
-//     c->max_tu = MAX_TU;
-//     c->packet_size_to_buffer_size = e1000e_packet_size_to_buffer_size;
-//     return 0;
-// }
-
-// static int e1000e_unmap_callback(struct e1000e_map_ring *map,
-//                                  uint64_t **callback,
-//                                  void **context)
-// {
-//     // callback is a function pointer
-//     DEBUG("unmap callback fn head_pos %d tail_pos %d\n",
-//           map->head_pos, map->tail_pos);
-
-//     if (map->head_pos == map->tail_pos)
-//     {
-//         // if there is an empty mapping ring buffer, do not unmap the callback
-//         ERROR("Try to unmap an empty queue\n");
-//         return -1;
-//     }
-
-//     uint64_t i = map->head_pos;
-//     DEBUG("unmap callback fn: before unmap head_pos %d tail_pos %d\n",
-//           map->head_pos, map->tail_pos);
-
-//     *callback = (uint64_t *)map->map_ring[i].callback;
-//     *context = map->map_ring[i].context;
-//     map->map_ring[i].callback = NULL;
-//     map->map_ring[i].context = NULL;
-//     map->head_pos = (1 + map->head_pos) % map->ring_len;
-
-//     DEBUG("unmap callback fn: callback 0x%p, context 0x%p\n",
-//           *callback, *context);
-//     DEBUG("end unmap callback fn: after unmap head_pos %d tail_pos %d\n",
-//           map->head_pos, map->tail_pos);
-//     return 0;
-// }
-
-// static int e1000e_map_callback(struct e1000e_map_ring *map,
-//                                void (*callback)(nk_net_dev_status_t, void *),
-//                                void *context)
-// {
-//     DEBUG("map callback fn: head_pos %d tail_pos %d\n", map->head_pos, map->tail_pos);
-//     if (map->head_pos == ((map->tail_pos + 1) % map->ring_len))
-//     {
-//         // when the mapping callback queue is full
-//         ERROR("map callback fn: Callback mapping queue is full.\n");
-//         return -1;
-//     }
-
-//     DEBUG("map callback fn: map head_pos: %d, tail_pos: %d\n",
-//           map->head_pos, map->tail_pos);
-//     uint64_t i = map->tail_pos;
-//     struct e1000e_fn_map *fnmap = (map->map_ring + i);
-//     fnmap->callback = callback;
-//     fnmap->context = (uint64_t *)context;
-//     map->tail_pos = (1 + map->tail_pos) % map->ring_len;
-//     DEBUG("map callback fn: callback 0x%p, context 0x%p\n",
-//           callback, context);
-//     DEBUG("end map callback fn: after map head_pos: %d, tail_pos: %d\n",
-//           map->head_pos, map->tail_pos);
-//     return 0;
-// }
-
-// static void e1000e_interpret_int(struct e1000e_state *state, uint32_t int_reg)
-// {
-//     if (int_reg & E1000E_ICR_TXDW)
-//         INFO("\t TXDW triggered\n");
-//     if (int_reg & E1000E_ICR_TXQE)
-//         INFO("\t TXQE triggered\n");
-//     if (int_reg & E1000E_ICR_LSC)
-//         INFO("\t LSC triggered\n");
-//     if (int_reg & E1000E_ICR_RXO)
-//         INFO("\t RX0 triggered\n");
-//     if (int_reg & E1000E_ICR_RXT0)
-//         INFO("\t RXT0 triggered\n");
-//     if (int_reg & E1000E_ICR_TXD_LOW)
-//         INFO("\t TXD_LOW triggered\n");
-//     if (int_reg & E1000E_ICR_SRPD)
-//     {
-//         INFO("\t SRPD triggered\n");
-//         INFO("\t RSRPD.size %u\n", READ_MEM(state, E1000E_RSRPD_OFFSET));
-//     }
-//     if (int_reg & E1000E_ICR_RXQ0)
-//         INFO("\t RXQ0 triggered\n");
-//     if (int_reg & E1000E_ICR_RXQ1)
-//         INFO("\t RXQ1 triggered\n");
-//     if (int_reg & E1000E_ICR_TXQ0)
-//         INFO("\t TXQ0 triggered\n");
-//     if (int_reg & E1000E_ICR_TXQ1)
-//         INFO("\t TXQ1 triggered\n");
-//     if (int_reg & E1000E_ICR_OTHER)
-//         INFO("\t Other \n");
-//     if (int_reg & E1000E_ICR_INT_ASSERTED)
-//         INFO("\t INT_ASSERTED triggered\n");
-//     INFO("interpret int: end --------------------\n");
-// }
-
-// static void e1000e_interpret_ims(struct e1000e_state *state)
-// {
-//     uint32_t ims_reg = READ_MEM(state, E1000E_IMS_OFFSET);
-//     INFO("interpret ims: IMS 0x%08x\n", ims_reg);
-//     e1000e_interpret_int(state, ims_reg);
-// }
-
-// static void e1000e_interpret_icr(struct e1000e_state *state)
-// {
-//     uint32_t icr_reg = READ_MEM(state, E1000E_ICR_OFFSET);
-//     INFO("interpret icr: ICR 0x%08x\n", icr_reg);
-//     e1000e_interpret_int(state, icr_reg);
-// }
-
-// static int e1000e_post_send(void *vstate,
-//                             uint8_t *src,
-//                             uint64_t len,
-//                             void (*callback)(nk_net_dev_status_t, void *),
-//                             void *context)
-// {
-//     // always map callback
-//     struct e1000e_state *state = (struct e1000e_state *)vstate;
-//     DEBUG("post tx fn: callback 0x%p context 0x%p\n", callback, context);
-
-//     // #measure
-//     TIMING_GET_TSC(state->measure.tx.postx_map.start);
-//     int result = e1000e_map_callback(state->tx_map, callback, context);
-//     TIMING_GET_TSC(state->measure.tx.postx_map.end);
-
-//     // #measure
-//     TIMING_GET_TSC(state->measure.tx.xpkt.start);
-//     if (!result)
-//     {
-//         result = e1000e_send_packet(src, len, (struct e1000e_state *)state);
-//     }
-//     TIMING_GET_TSC(state->measure.tx.xpkt.end);
-
-//     DEBUG("post tx fn: end\n");
-//     return result;
-// }
-
-// static int e1000e_post_receive(void *vstate,
-//                                uint8_t *src,
-//                                uint64_t len,
-//                                void (*callback)(nk_net_dev_status_t, void *),
-//                                void *context)
-// {
-//     // mapping the callback always
-//     // if result != -1 receive packet
-//     struct e1000e_state *state = (struct e1000e_state *)vstate;
-//     DEBUG("post rx fn: callback 0x%p, context 0x%p\n", callback, context);
-
-//     // #measure
-//     TIMING_GET_TSC(state->measure.rx.postx_map.start);
-//     int result = e1000e_map_callback(state->rx_map, callback, context);
-//     TIMING_GET_TSC(state->measure.rx.postx_map.end);
-
-//     // #measure
-//     TIMING_GET_TSC(state->measure.rx.xpkt.start);
-//     if (!result)
-//     {
-//         result = e1000e_receive_packet(src, len, state);
-//     }
-//     TIMING_GET_TSC(state->measure.rx.xpkt.end);
-
-//     DEBUG("post rx fn: end --------------------\n");
-//     return result;
-// }
-
-// enum pkt_op
-// {
-//     op_unknown,
-//     op_tx,
-//     op_rx
-// };
-
-// static int e1000e_irq_handler(excp_entry_t *excp, excp_vec_t vec, void *s)
-// {
-//     DEBUG("irq_handler fn: vector: 0x%x rip: 0x%p s: 0x%p\n",
-//           vec, excp->rip, s);
-
-//     // #measure
-//     uint64_t irq_start = 0;
-//     uint64_t irq_end = 0;
-//     uint64_t callback_start = 0;
-//     uint64_t callback_end = 0;
-//     enum pkt_op which_op = op_unknown;
-
-//     TIMING_GET_TSC(irq_start);
-//     struct e1000e_state *state = s;
-//     uint32_t icr = READ_MEM(state, E1000E_ICR_OFFSET);
-//     uint32_t mask_int = icr & state->ims_reg;
-//     DEBUG("irq_handler fn: ICR: 0x%08x IMS: 0x%08x mask_int: 0x%08x\n",
-//           icr, state->ims_reg, mask_int);
-
-//     void (*callback)(nk_net_dev_status_t, void *) = NULL;
-//     void *context = NULL;
-//     nk_net_dev_status_t status = NK_NET_DEV_STATUS_SUCCESS;
-
-//     if (mask_int & (E1000E_ICR_TXDW | E1000E_ICR_TXQ0))
-//     {
-
-//         which_op = op_tx;
-//         // transmit interrupt
-//         DEBUG("irq_handler fn: handle the txdw interrupt\n");
-//         TIMING_GET_TSC(state->measure.tx.irq_unmap.start);
-//         e1000e_unmap_callback(state->tx_map,
-//                               (uint64_t **)&callback,
-//                               (void **)&context);
-//         TIMING_GET_TSC(state->measure.tx.irq_unmap.end);
-
-//         // if there is an error while sending a packet, set the error status
-//         if (TXD_STATUS(TXD_PREV_HEAD).ec || TXD_STATUS(TXD_PREV_HEAD).lc)
-//         {
-//             ERROR("irq_handler fn: transmit errors\n");
-//             status = NK_NET_DEV_STATUS_ERROR;
-//         }
-
-//         // update the head of the ring buffer
-//         TXD_PREV_HEAD = TXD_INC(1, TXD_PREV_HEAD);
-//         DEBUG("irq_handler fn: total packet transmitted = %d\n",
-//               READ_MEM(state, E1000E_TPT_OFFSET));
-//     }
-
-//     if (mask_int & (E1000E_ICR_RXT0 | E1000E_ICR_RXO | E1000E_ICR_RXQ0))
-//     {
-//         which_op = op_rx;
-//         // receive interrupt
-//         /* if (mask_int & E1000E_ICR_RXT0) { */
-//         /*   DEBUG("irq_handler fn: handle the rxt0 interrupt\n"); */
-//         /* } */
-
-//         /* if (mask_int & E1000E_ICR_RXO) { */
-//         /*   DEBUG("irq_handler fn: handle the rx0 interrupt\n"); */
-//         /* } */
-
-//         // INFO("rx length %d\n", RXD_LENGTH(RXD_PREV_HEAD));
-//         TIMING_GET_TSC(state->measure.rx.irq_unmap.start);
-//         e1000e_unmap_callback(state->rx_map,
-//                               (uint64_t **)&callback,
-//                               (void **)&context);
-//         TIMING_GET_TSC(state->measure.rx.irq_unmap.end);
-
-//         // e1000e_interpret_ims(state);
-//         // TODO: check if we need this line
-//         // WRITE_MEM(state, E1000E_IMC_OFFSET, E1000E_ICR_RXO);
-
-//         // checking errors
-//         if (RXD_ERRORS(RXD_PREV_HEAD))
-//         {
-//             ERROR("irq_handler fn: receive an error packet\n");
-//             status = NK_NET_DEV_STATUS_ERROR;
-//         }
-
-//         // in the irq, update only the head of the buffer
-//         RXD_PREV_HEAD = RXD_INC(1, RXD_PREV_HEAD);
-//     }
-
-//     TIMING_GET_TSC(callback_start);
-//     if (callback)
-//     {
-//         DEBUG("irq_handler fn: invoke callback function callback: 0x%p\n", callback);
-//         callback(status, context);
-//     }
-//     TIMING_GET_TSC(callback_end);
-
-//     DEBUG("irq_handler fn: end irq\n\n\n");
-//     // DO NOT DELETE THIS LINE.
-//     // must have this line at the end of the handler
-//     IRQ_HANDLER_END();
-
-// #if TIMING
-//     // #measure
-//     irq_end = rdtsc();
-
-//     if (which_op == op_tx)
-//     {
-//         state->measure.tx.irq_callback.start = callback_start;
-//         state->measure.tx.irq_callback.end = callback_end;
-//         state->measure.tx.irq.start = irq_start;
-//         state->measure.tx.irq.end = irq_end;
-//     }
-//     else
-//     {
-//         state->measure.rx.irq_callback.start = callback_start;
-//         state->measure.rx.irq_callback.end = callback_end;
-//         state->measure.rx.irq.start = irq_start;
-//         state->measure.rx.irq.end = irq_end;
-//     }
-// #endif
-
-//     return 0;
-// }
-
-// uint32_t e1000e_read_speed_bit(uint32_t reg, uint32_t mask, uint32_t shift)
-// {
-//     uint32_t speed = (reg & mask) >> shift;
-//     if (speed == E1000E_SPEED_ENCODING_1G_V1 || speed == E1000E_SPEED_ENCODING_1G_V2)
-//     {
-//         return E1000E_SPEED_ENCODING_1G_V1;
-//     }
-//     return speed;
-// }
-
-// char *e1000e_read_speed_char(uint32_t reg, uint32_t mask, uint32_t shift)
-// {
-//     uint32_t encoding = e1000e_read_speed_bit(reg, mask, shift);
-//     char *res = NULL;
-//     switch (encoding)
-//     {
-//     case E1000E_SPEED_ENCODING_10M:
-//         res = "10M";
-//         break;
-//     case E1000E_SPEED_ENCODING_100M:
-//         res = "100M";
-//         break;
-//     case E1000E_SPEED_ENCODING_1G_V1:
-//     case E1000E_SPEED_ENCODING_1G_V2:
-//         res = "1G";
-//         break;
-//     }
-//     return res;
-// }
-
-
-// //
-// // DEBUGGING AND TIMING ROUTINES FOLLOW
-// //
-// //
-
-// #if TIMING
-// static void e1000e_read_write(struct e1000e_state *state)
-// {
-//     INFO("Testing Read Write Delay\n");
-//     volatile uint64_t mem_var = 0x55;
-//     uint64_t tsc_sta = 0;
-//     uint64_t tsc_end = 0;
-//     uint64_t tsc_delay = 0;
-
-//     INFO("Reading Delay from MEM\n");
-//     TIMING_GET_TSC(tsc_sta);
-//     uint64_t read_var = mem_var;
-//     TIMING_GET_TSC(tsc_end);
-//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-//     INFO("Reading Delay %lu\n\n", tsc_delay);
-
-//     INFO("Writing Delay from MEM\n");
-//     TIMING_GET_TSC(tsc_sta);
-//     mem_var = 0x66;
-//     TIMING_GET_TSC(tsc_end);
-//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-//     INFO("Writing Delay %lu\n\n", tsc_delay);
-
-//     INFO("Reading Delay from NIC\n");
-//     TIMING_GET_TSC(tsc_sta);
-//     uint32_t tctl_reg = READ_MEM(state, E1000E_TCTL_OFFSET);
-//     TIMING_GET_TSC(tsc_end);
-//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-//     INFO("Reading Delay %lu\n\n", tsc_delay);
-
-//     INFO("Writing Delayi from NIC\n");
-//     TIMING_GET_TSC(tsc_sta);
-//     WRITE_MEM(state, E1000E_AIT_OFFSET, 0);
-//     TIMING_GET_TSC(tsc_end);
-//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-//     INFO("Writing Delay, %lu\n\n", tsc_delay);
-
-//     INFO("Reading pci_cfg_readw Delay\n");
-//     TIMING_GET_TSC(tsc_sta);
-//     uint32_t status_pci = pci_dev_cfg_readw(state->pci_dev, E1000E_PCI_STATUS_OFFSET);
-//     TIMING_GET_TSC(tsc_end);
-//     TIMING_DIFF_TSC(tsc_delay, tsc_sta, tsc_end);
-//     INFO("Reading pci_dev_cfg_readw Delay, %lu\n\n", tsc_delay);
-// }
-// #endif
