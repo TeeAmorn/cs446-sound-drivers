@@ -294,15 +294,18 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
     nk_sound_dev_scale_t allowed_scales;
 
     // The AC97 can support up to 1 input stream. The user application must support mixing. 
-    struct nk_sound_dev_stream* stream;
+    struct nk_sound_dev_stream* output_stream; // TODO: name this output_stream when we adapt the code to support both
+    struct nk_sound_dev_stream* INPUT_STREAM; 
 
     // TODO: What else do we need to add?
 };
 
 /* Used to create a list of all possible sample rates supported by the AC97 */
+// The QEMU AC97 currently supports all variable-rate frequencies between 7 and 48 kHz, see 'probe_variable_sample_rates'
+// We have outlined some popular options to implement using the nk_sound_dev_sample_rate_t enum.
 struct ac97_sample_rate
 {
-    uint16_t rate;        // the AC97 may support variable-rate frequencies between 7 and 48 kHz, which fit in a uint16_t
+    nk_sound_dev_sample_rate_t rate; 
     struct list_head node;
 };
 
@@ -446,11 +449,23 @@ static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t ton
     //}
 }
 
+static int print_bdl_out(struct ac97_state *state)
+{
+    /*
+    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
+    */
+    DEBUG("Printing the contents of the PCM OUT BDL...\n");
+    for (int i = 0; i < BDL_MAX_SIZE; i++)
+    {
+        ac97_bdl_entry entry = OUT_ENTRY(i);
+        DEBUG("Entry %d: %016lx\n", i, entry.val);
+    }
+    return 0;
+}
+
 // // list of discovered devices
 static struct list_head dev_list;
 static struct ac97_state *dirty_state; 
-
-
 
 static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_params *params)
 {
@@ -458,12 +473,11 @@ static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_
     Modifies the registers of the AC97 to configure the stream parameters found in 'params'
     */
     // bar2 global control register 21:20 PCM output channels, 21:22 sample resolution
-    // TODO: set num channels, sample rate, sample resolution
     uint16_t gcr_port = state->ioport_start_bar1 + AC97_NABM_CTRL;
     global_control_register_t global_control_register;
     global_control_register.val = INL(gcr_port);
-//    uint32_t test = INL(gcr_port);
-//    global_control_register.val = test;
+
+    // Inspect params object to configure output channels and sample resolution
     switch(params->num_of_channels) {
         case 2:
             global_control_register.chnl = 0;
@@ -476,8 +490,8 @@ static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_
             break;
         default:
             ERROR("Number of channels is not a valid value\n");
+            break;
     }
-
     switch(params->sample_resolution) {
         case NK_SOUND_DEV_SAMPLE_RESOLUTION_16:
             global_control_register.out_mode = 0;
@@ -487,20 +501,68 @@ static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_
             break;
         default:
             ERROR("Sample resolution is not a valid value\n");
+            break;
     }
 
-    // TODO: Write conditionals to handle sample resolution. Default = 48k
+    DEBUG("Writing to global control register to configure sample resolution and channels...\n");
+    OUTL(global_control_register.val, gcr_port);
+
+    // Configure ADC and DAC sample rate from the 'params' object.  
     uint16_t DAC_port = state->ioport_start_bar0 + AC97_NAM_DAC_RATE;
-    uint16_t sample_rate = 0xBB80;
+    uint16_t ADC_port = state->ioport_start_bar0 + AC97_NAM_ADC_RATE;
+    uint16_t sample_rate = 0xBB80; // Default = 48kHz
+
+    switch (params->sample_rate) // AC97 supports frequencies between 7000 and 48000 Hz 
+    {
+        case NK_SOUND_DEV_SAMPLE_RATE_8kHZ:
+            sample_rate = 0x1F40;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RATE_11kHZ025:
+            sample_rate = 0x2B11;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RATE_16kHZ:
+            sample_rate = 0x3E80;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RATE_22kHZ05:
+            sample_rate = 0x5622;
+            break;    
+        case NK_SOUND_DEV_SAMPLE_RATE_32kHZ:
+            sample_rate = 0x7D00;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RATE_44kHZ1:
+            sample_rate = 0xAC44;
+            break;
+        case NK_SOUND_DEV_SAMPLE_RATE_48kHZ:
+            sample_rate = 0xBB80;
+            break;
+        default:
+            ERROR("Inputted sample rate is not a valid value!\n");
+            break;
+    }
+
+    DEBUG("Writing sample rate to ADC and DAC ports...\n");
     OUTW(sample_rate, DAC_port);
     uint16_t returned_rate = INW(DAC_port);
     if(sample_rate != returned_rate){
+        // From our test function probe_variable_sample_rates, we found that the emulated AC97 allows any 
+        // rate you set, so long as it is between 7000 and 48000. Unless that changes, this error should
+        // never arise. 
+        ERROR("Could not set provided sample rate");
+    }
+
+    OUTW(sample_rate, ADC_port);
+    returned_rate = INW(ADC_port);
+    if (sample_rate != returned_rate)
+    {
+        // From our test function probe_variable_sample_rates, we found that the emulated AC97 allows any
+        // rate you set, so long as it is between 7000 and 48000. Unless that changes, this error should
+        // never arise.
         ERROR("Could not set provided sample rate");
     }
     return;
 }
 
-int ac97_get_available_modes(struct nk_sound_dev *dev, struct nk_sound_dev_params params[], uint32_t params_size)
+int ac97_get_available_modes(void *state, struct nk_sound_dev_params params[], uint32_t params_size)
 {
     /*
     Given a pre-allocated array 'params' of size 'params_size', this function fills out the 'params' array
@@ -511,36 +573,115 @@ int ac97_get_available_modes(struct nk_sound_dev *dev, struct nk_sound_dev_param
     all possible configurations, the user can use the return value to traverse only elements that have been filled
     by this function. Or, if 'params' is too small, the user can learn how large it should be. 
     */
-
-    struct ac97_state *ac_state = dev->dev.state; // get struct ac97_state* from device struct
+    struct ac97_state *ac_state = (struct ac97_state*) state; // get struct ac97_state* from device struct
 
     // AC97 may support 16 bit audio OR 16 and 20 bit audio. 
-    int n_res_options = (ac_state->max_resolution == 16) ? 1 : 2;
+    uint8_t n_res_options = (ac_state->max_resolution == 16) ? 1 : 2;
+    nk_sound_dev_sample_resolution_t allowed_resolutions[2] = {NK_SOUND_DEV_SAMPLE_RESOLUTION_16,
+                                                               NK_SOUND_DEV_SAMPLE_RESOLUTION_20};
 
     // AC97 may support audio for an even number of channels between 2 and 6
-    int n_chnl_options = ac_state->max_channels / 2; 
+    uint8_t n_chnl_options = ac_state->max_channels / 2;
 
-    // After creating probe_variable_sample_rates, it turns out the AC97 seems to support ANY frequency between
-    // 7000 and 48000 Hz. Not sure how to finish this function because we definitely don't want to return a list of 
-    // 41000 integers. We need to talk to the other sound team to decide on how the abstraction layer will support this.
+    // AC97 supports logarithmic/linearly scaled audio on the software side
+    nk_sound_dev_scale_t allowed_scales[2] = {NK_SOUND_DEV_SCALE_LINEAR,
+                                              NK_SOUND_DEV_SCALE_LOGARITHMIC};
 
-    /*
-    for (int i = 16; i <= _state->max_resolution; i+=4) {
-       resolutions[*num_options] = i;
-       *num_options++;
+    // AC97 supports one input/output stream at a time
+    nk_sound_dev_stream_t stream_types[2] = {NK_SOUND_DEV_INPUT_STREAM,
+                                             NK_SOUND_DEV_OUTPUT_STREAM};
+
+    // Fill the params array that was given to us with as many different options as we support.
+    uint32_t idx = 0;
+    struct list_head *cur_rate;
+    list_for_each(cur_rate, &ac_state->sample_rates_list) // this was filled when ac97_pci_init() was called.
+    {
+        struct ac97_sample_rate *samp_rate_ptr = list_entry(cur_rate, struct ac97_sample_rate, node);
+        nk_sound_dev_sample_rate_t rate = samp_rate_ptr->rate; 
+
+        for (int i = 0; i < n_res_options; i++)
+        {
+            nk_sound_dev_sample_resolution_t resolution = allowed_resolutions[i];
+
+            for (int j = 0; j < n_chnl_options; j++)
+            {
+                uint8_t channels = 2 + 2*j; 
+
+                for (int k = 0; k < 2; k++)
+                {
+                    nk_sound_dev_scale_t scale = allowed_scales[k];
+
+                    for (int t = 0; t < 2; t++)
+                    {
+                        nk_sound_dev_stream_t type = stream_types[t];
+
+                        // Only add to 'params' if there is room, but we don't want to return out of the function
+                        // until we've traversed all possible options
+                        if (idx < params_size)
+                        {
+                            struct nk_sound_dev_params params_to_add;
+                            params_to_add.type = type;
+                            params_to_add.num_of_channels = channels;
+                            params_to_add.sample_rate = rate;
+                            params_to_add.sample_resolution = resolution;
+                            params_to_add.scale = scale;
+                            params[i] = params_to_add;
+                        }
+                        idx++;
+                    }
+                }
+            }
+        }
     }
-    */
-    // TODO: I am bootstrapping this function for the time being while we wait on clarification on how to handle sample rates
-    struct nk_sound_dev_params bootstrap_params;
-    bootstrap_params.type = NK_SOUND_DEV_OUTPUT_STREAM;
-    bootstrap_params.num_of_channels = 2;
-    bootstrap_params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
-    bootstrap_params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
-    bootstrap_params.scale = NK_SOUND_DEV_SCALE_LOGARITHMIC;
-    params[0] = bootstrap_params;
-    return 1;
-    ERROR("This function has not been finished!\n");
-    return -1; // TODO: return the number of filled options instead!
+    return idx; // return total number of possible options; user can use this to ensure their pre-allocated 'params' array is large enough 
+}
+
+static int verify_stream(struct ac97_state *state, )
+{
+    // This code ensures the inputted stream has been opened before we attempt to close it.
+    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
+    {
+        if (ac_state->INPUT_STREAM == NULL)
+        {
+            ERROR("Attempting to play from an input stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->INPUT_STREAM)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // Free stream pointers in device state and set to null
+        DEBUG("Deallocating the stream struct in device state\n");
+        free(ac_state->INPUT_STREAM);  // this also frees the 'stream' that was passed in
+        ac_state->INPUT_STREAM = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    {
+        if (ac_state->stream == NULL)
+        {
+            ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // Free stream pointers in device state and set to null
+        DEBUG("Deallocating the stream struct in device state\n");
+        free(ac_state->stream);  // this also frees the 'stream' that was passed in
+        ac_state->stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+    }
+    else
+    {
+        ERROR("Inputted stream type is unrecognizable!\n");
+        return -1;
+    }
 }
 
 struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_params *params)
@@ -549,52 +690,295 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
     Opens a stream between the AC97 device and the caller. The AC97 can only support a single stream at
     a time.
     */
-
     struct ac97_state *ac_state = (struct ac97_state*) state;
 
-    if(ac_state->stream) // 'stream' is initialized to NULL in ac97_pci_init() or upon a call to close_stream()
+    // This code ensures the inputted stream has been opened before we attempt to close it.
+    if (params.type == NK_SOUND_DEV_INPUT_STREAM)
     {
-        DEBUG("Stream value: %d\n", ac_state->stream);
-        ERROR("Cannot open a second AC97 stream!\n");
-        return -1;
-    }
+        // check that another stream has not been allocated
+        if (ac_state->INPUT_STREAM != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
+        {
+            ERROR("Attempted to open a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
 
-//     allocate the stream object, it will be freed by ac97_close_stream
-    ac_state->stream = (struct nk_sound_dev_stream*) malloc(sizeof(struct nk_sound_dev_stream));
-    if (!ac_state->stream)
+        // allocate the stream on the heap, set defaults
+        ac_state->INPUT_STREAM = (struct nk_sound_dev_stream *)malloc(sizeof(struct nk_sound_dev_stream));
+        if (!ac_state->INPUT_STREAM)
+        {
+            ERROR("Could not allocate input stream!\n");
+            return -1;
+        }
+        ac_state->INPUT_STREAM->stream_id = 0;         // input streams will have stream_id = 0
+        ac_state->INPUT_STREAM->params = *params;      // TODO: Should the device assume the parameters are compatible, or should it validate them?
+        
+        ac97_set_sound_params(ac_state, params, 0); // TODO: Change set_sound_params to handle input and output logic
+        // TODO: Init the correct BDL based on the stream type
+        // init input bdl
+        if (ac97_init_bdl(ac_state, 0) == -1)
+        {
+            return -1;
+        }
+
+        return ac_state->INPUT_STREAM;
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
-        ERROR("Could not allocate nk_sound_dev_stream object!\n");
+        // check that another stream has not been allocated
+        if (ac_state->output_stream != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
+        {
+            ERROR("Attempted to open a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // allocate the stream on the heap, set defaults
+        ac_state->output_stream = (struct nk_sound_dev_stream *)malloc(sizeof(struct nk_sound_dev_stream));
+        if (!ac_state->output_stream)
+        {
+            ERROR("Could not allocate output stream!\n");
+            return -1;
+        }
+        ac_state->output_stream->stream_id = 0;    // input streams will have stream_id = 0
+        ac_state->output_stream->params = *params; // TODO: Should the device assume the parameters are compatible, or should it validate them?
+
+        ac97_set_sound_params(ac_state, params, 1); // TODO: Change set_sound_params to handle input and output logic
+
+        // TODO: Init the correct BDL based on the stream type
+        // init output bdl
+        if (ac97_init_bdl(ac_state, 1) == -1)
+        {
+            return -1;
+        }
+
+        return ac_state->output_stream;
+    }
+    else
+    {
+        ERROR("Inputted stream type is unrecognizable!\n");
         return -1;
     }
-    ac_state->stream->stream_id = 0; // this field is not used by the AC97 since it can only support one stream
-    ac_state->stream->params = *params; // TODO: Should the device assume the parameters are sound, or should it validate them?
-    ac97_set_sound_params(ac_state, params); // only one stream, so configure its desired parameters
-    // init output bdl
-    if(ac97_init_output_bdl(ac_state) == -1){
-        return -1;
-    }
-    return ac_state->stream;
 }
 
-// TODO: Write close_stream, and have it free the stream object then set it explicitly to NULL 
-
-void ac97_close_stream(void* state, struct nk_sound_dev_stream *stream){
+int ac97_close_stream(void* state, struct nk_sound_dev_stream *stream){
     /*
     Frees all the malloced resources from open stream and ac97_init_output_bdl
 
      CURRENTLY ERRORS WHEN CALLED (not in the function, calling the function itself causes the error)
      ERROR is invalid opcode
     */
+
+    // TODO: Use logic similar to ac97_play_stream to ensure the pointer that was passed is tracked by us.
+    //       If it is, then free it. 
+
     struct ac97_state *ac_state = (struct ac97_state*) state;
 
-//     free stream and set to null
+    // This code ensures the inputted stream has been opened before we attempt to close it. 
+    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
+    {   
+        if (ac_state->INPUT_STREAM == NULL)
+        {
+            ERROR("Attempting to play from an input stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->INPUT_STREAM)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
 
-    DEBUG("Deallocating the stream struct in device state\n");
-    free(ac_state->stream);
-    ac_state->stream = NULL;
+        // Free stream pointers in device state and set to null
+        DEBUG("Deallocating the stream struct in device state\n");
+        free(ac_state->INPUT_STREAM); // this also frees the 'stream' that was passed in
+        ac_state->INPUT_STREAM = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    {
+        if (ac_state->stream == NULL)
+        {
+            ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
 
-//     free bdl entries
+        // Free stream pointers in device state and set to null
+        DEBUG("Deallocating the stream struct in device state\n");
+        free(ac_state->stream);  // this also frees the 'stream' that was passed in
+        ac_state->stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+    }
+    else
+    {
+        ERROR("Inputted stream type is unrecognizable!\n");
+        return -1;
+    }
+
+    // The BDL is associated with the stream, so we should free it when the user decides to close it
     ac97_deinit_output_bdl(ac_state);
+    return 0;
+}
+
+
+
+int ac97_get_stream_params(void *state, struct nk_sound_dev_stream *stream, struct nk_sound_dev_params *p)
+{
+    /* 
+    I was going to implement this function, but I'm kind of confused about it. How would a user ever "forget"
+    the stream parameters and need to request them again? They must already have a pointer to the stream, which
+    also has a pointer to its parameters...
+    */
+    ERROR("I haven't been implemented!\n");
+    return -1;
+}
+
+int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
+{
+    /*
+    Activates the DMA of the inputted stream to tell the AC97 to begin consuming buffers. 
+    */
+    struct ac97_state* ac_state = (struct ac97_state*) state;
+
+    // This code ensures the inputted stream has been opened before we activate the DMA
+    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
+    {
+        if (ac_state->INPUT_STREAM == NULL)
+        {
+            ERROR("Attempting to play from an input stream, but one hasn't been opened!\n"); 
+            return -1;
+        }
+        else if (stream != ac_state->INPUT_STREAM)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C? 
+            ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // print the BDL before we consume it
+        print_bdl_out(ac_state);
+
+        // grabbing struct, setting relevant field, rewriting
+        uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc_td = (transfer_control_t)tc_int_td;
+        tc_td.dma_control = 1;
+        // Turn on all interrupts for now
+        tc_td.lbe_interrupt = 1;
+        tc_td.ioc_interrupt = 1;
+        tc_td.fifo_interrupt = 1;
+
+        DEBUG("Setting bit to transfer data...\n");
+        OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+        return 0;
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    {
+        if (ac_state->stream == NULL)
+        {
+            ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // print the BDL before we consume it
+        print_bdl_out(ac_state);
+
+        // grabbing struct, setting relevant field, rewriting
+        uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc_td = (transfer_control_t)tc_int_td;
+        tc_td.dma_control = 1;
+        // Turn on all interrupts for now
+        tc_td.lbe_interrupt = 1;
+        tc_td.ioc_interrupt = 1;
+        tc_td.fifo_interrupt = 1;
+
+        DEBUG("Setting bit to transfer data...\n");
+        OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        return 0;
+    }
+    
+    ERROR("Inputted stream type is unrecognizable!\n");
+    return -1;
+}
+
+int ac97_stop_stream(void *state, struct nk_sound_dev_stream *stream)
+{
+    /*
+    Activates the DMA of the inputted stream to tell the AC97 to begin consuming buffers.
+    */
+    struct ac97_state *ac_state = (struct ac97_state *) state;
+
+    // This code ensures the inputted stream has been opened before we activate the DMA
+    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
+    {
+        if (ac_state->INPUT_STREAM == NULL)
+        {
+            ERROR("Attempting to stop an input stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->INPUT_STREAM)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to stop a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // print the BDL before we consume it
+        print_bdl_out(ac_state);
+
+        // grabbing struct, setting relevant field, rewriting
+        uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc_td = (transfer_control_t)tc_int_td;
+        tc_td.dma_control = 0;
+        // Turn on all interrupts for now
+        tc_td.lbe_interrupt = 1;
+        tc_td.ioc_interrupt = 1;
+        tc_td.fifo_interrupt = 1;
+
+        DEBUG("Setting bit to transfer data...\n");
+        OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+        return 0;
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    {
+        if (ac_state->stream == NULL)
+        {
+            ERROR("Attempting to stop an output stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to stop a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+
+        // print the BDL before we consume it
+        print_bdl_out(ac_state);
+
+        // grabbing struct, setting relevant field, rewriting
+        uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc_td = (transfer_control_t)tc_int_td;
+        tc_td.dma_control = 0;
+        // Turn on all interrupts for now
+        tc_td.lbe_interrupt = 1;
+        tc_td.ioc_interrupt = 1;
+        tc_td.fifo_interrupt = 1;
+
+        DEBUG("Setting bit to transfer data...\n");
+        OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        return 0;
+    }
+
+    ERROR("Inputted stream type is unrecognizable!\n");
+    return -1;
 }
 
 static void probe_variable_sample_rates(struct ac97_state *state)
@@ -726,8 +1110,6 @@ int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
   } */
 
   struct ac97_state *ac_state = (struct ac97_state*) state;
-  
-
   if (!ac_state->stream) {
     ERROR("Stream has not been opened yet\n");
     return -1;
@@ -743,7 +1125,6 @@ int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
 
   return 0;
 }
-
 
 //TODO: handle the usage of callbacks. Right now implementation is non blocking
 int ac97_write_to_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
@@ -791,12 +1172,7 @@ int ac97_write_to_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
     }
 
     return 0;
-
-
-
 }
-
-
 
 static int write_to_bdl_test(char *buf, void *priv)
 {
@@ -830,22 +1206,6 @@ static struct shell_cmd_impl write_to_bdl_impl = {
     .handler = write_to_bdl_test,
 };
 nk_register_shell_cmd(write_to_bdl_impl);
-
-
-static int print_bdl_out(struct ac97_state *state)
-{
-    /* 
-    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
-    */
-    DEBUG("Printing the contents of the PCM OUT BDL...\n");
-    for (int i = 0; i < BDL_MAX_SIZE; i++)
-    {
-        ac97_bdl_entry entry = OUT_ENTRY(i);
-        DEBUG("Entry %d: %016lx\n", i, entry.val);
-    }
-    return 0;
-}
-
 
 
 int ac97_consume_out_buffer(struct ac97_state *state)
@@ -937,7 +1297,19 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     //       are raised from the output box only. 
     if (tr_stat.lbe_interrupt == 1) {
         DEBUG("Handling last buffer entry interrupt...\n");
-        ac97_deinit_output_bdl(state);
+
+        /*
+        Not sure if the device should be halted when handling this interrupt, but it does have implications
+        for our device control, so we should check it. For example, if the device halts itself, but then
+        the user tries to write more sound data to play, won't we need to resume the device ourselves? 
+
+        This logic shouldn't be that hard to write, we can just set some value in the ac97 state struct 
+        to let other functions know that we should resume the stream. 
+        */
+        if (tr_stat.dma_status == 0)
+                ERROR("Device is not halted, but we're handling the last buffer interrupt!\n");
+
+        // ac97_deinit_output_bdl(state);
         // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else if (tr_stat.ioc_interrupt == 1) {
@@ -990,14 +1362,14 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
 }
 
 static struct nk_sound_dev_int ops = {
-        .get_available_modes = ac97_get_available_modes,
-        .open_stream = ac97_open_stream,
-        .close_stream = ac97_close_stream,
-        .write_to_stream = NULL, //TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
-        .read_from_stream = NULL, //TODO implement function
-        .get_stream_params = NULL, //TODO: implement function
-        .play_stream = NULL, //TODO: implement function
-        .close_stream = NULL
+    .get_available_modes = ac97_get_available_modes,
+    .open_stream = ac97_open_stream,
+    .close_stream = ac97_close_stream,
+    .write_to_stream = NULL,                     // TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
+    .read_from_stream = NULL,                    // TODO implement function
+    .get_stream_params = ac97_get_stream_params, 
+    .play_stream = ac97_play_stream,             
+    .stop_stream = ac97_stop_stream
 };
 
 int ac97_pci_init(struct naut_info *naut)
@@ -1188,21 +1560,39 @@ int ac97_pci_init(struct naut_info *naut)
                 INIT_LIST_HEAD(&state->sample_rates_list);
 
                 // First bit indicates variable rate audio is supported; we must enable it then probe for all supported 
-                // sample rates to fill out our sample rates list. If it isn't supported, just ask the device for the 
-                // default rate and add that to the list. 
+                // sample rates to fill out our sample rates list. If it isn't supported, just add the default rate. 
                 if (caps & 0x0001) {
                     DEBUG("Enabling variable rate audio support...\n");
                     OUTW(0x0001, state->ioport_start_bar0 + AC97_NAM_EXT_FUNC_EN);
-                    // probe_variable_sample_rates(state);
+                    
+                    // Take all supported rates from sounddev.h that are between 7 and 48 kHz
+                    DEBUG("Filling sample rates list with popular accepted values...\n");
+                    nk_sound_dev_sample_rate_t accepted_rates[7] = {NK_SOUND_DEV_SAMPLE_RATE_8kHZ,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_11kHZ025,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_16kHZ,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_22kHZ05,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_32kHZ,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_44kHZ1,
+                                                                    NK_SOUND_DEV_SAMPLE_RATE_48kHZ};
+
+                    for (int i=0; i<7; i++)
+                    {
+                        struct ac97_sample_rate *rate = (struct ac97_sample_rate *)malloc(sizeof(struct ac97_sample_rate));
+                        if (!rate)
+                        {
+                            ERROR("Could not allocate AC97 Sample Rate struct!\n");
+                            return -1;
+                        }
+                        rate->rate = accepted_rates[i];
+                        list_add(&rate->node, &state->sample_rates_list);
+                    }
                 } else {
-                    DEBUG("Asking the AC97 for its default sample rate...\n");
-                    uint16_t default_rate = INW(state->ioport_start_bar0 + AC97_NAM_DAC_RATE); // will be same as value from AC97_NAM_ADC_RATE register
                     struct ac97_sample_rate* rate = (struct ac97_sample_rate*) malloc(sizeof(struct ac97_sample_rate));
                     if (!rate) {
                         ERROR("Could not allocate AC97 Sample Rate struct!\n");
                         return -1;
                     }
-                    rate->rate = default_rate;
+                    rate->rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ; // This is the default rate
                     list_add(&rate->node, &state->sample_rates_list);
                 }
                 /*
@@ -1260,9 +1650,6 @@ int ac97_pci_init(struct naut_info *naut)
                      return -1;
                  }
 
-                // Initialize the AC97 PCM Output Ring Buffer BDL and its Description
-                // ac97_init_output_bdl(state);
-
                 /*
                 Set master volume and PCM output volume to some defaults
                 */
@@ -1285,8 +1672,9 @@ int ac97_pci_init(struct naut_info *naut)
                 OUTW(master_vol.val, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
                 OUTW(pcm_vol.val, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
-                /* Initialize a stream */
+                /* TODO: Initialize separate in/out streams here */
                 state->stream = NULL;
+                state->INPUT_STREAM = NULL;
 
                 /* TODO: Write default volume parameters to a stream so they can be configured? */
 
@@ -1574,8 +1962,10 @@ int ac97_deinit_output_bdl(struct ac97_state* state) {
     // NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
     DEBUG("Deallocating the BDL ring buffer for the PCM OUT box\n");
 
+    /* We're assuming the caller is responsible for freeing their data
     for (int i=0; i < BDL_MAX_SIZE; i++) // Free all buffer entries pointed to by the BDL 
         {free((void*) OUT_ENTRY_ADDR(i));}
+    */
     
     free(OUT_RING); // Then free the pointer to the base address of the BDL
 
@@ -1679,7 +2069,7 @@ int test_ac97_abs()
     struct nk_sound_dev_params params[2];
     uint32_t params_size = 2;
     int num_entries = nk_sound_dev_get_available_modes(ac97_device, params, params_size);
-    if(num_entries == -1){
+    if(num_entries == 0){
         DEBUG("Could not retrieve stream params\n");
         return -1;
     }else{
@@ -1688,8 +2078,9 @@ int test_ac97_abs()
                   params[i].type, params[i].num_of_channels, params[i].sample_rate, params[i].sample_resolution);
         }
     }
+
     // Open stream
-    struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, params);
+    struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params); // just use first option in the list for testing
     if (ac97_stream == -1){
         DEBUG("Could not open stream\n");
         return -1;
@@ -1703,12 +2094,14 @@ int test_ac97_abs()
         DEBUG("Opened stream with the following parameters:\nnum_of_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
               (global_control_register.chnl + 1) * 2,  sample_rate, global_control_register.out_mode ? 20 : 16);
     }
-//    nk_sound_dev_close_stream(ac97_device, ac97_stream);
+
+    DEBUG("Closing the stream...\n"); 
+    nk_sound_dev_close_stream(ac97_device, ac97_stream);
 }
 
 static struct shell_cmd_impl test_ac97_abs_impl = {
         .cmd = "test_ac97_abs",
-        .help_str = "Test interacting with the ac97 device through the abstraction layer",
+        .help_str = "test_ac97_abs",
         .handler = test_ac97_abs,
 };
 nk_register_shell_cmd(test_ac97_abs_impl);
