@@ -205,6 +205,48 @@ typedef union
     } __attribute__((packed));
 } __attribute__((packed)) m_volume_t;
 
+//microphone volume data structure
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t gain : 5;
+        uint8_t rsvd_1 : 1;
+        uint8_t add_20 : 1;
+        uint8_t rsvd_2 : 8;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) mic_volume_t;
+
+//record gain data structure (like master volume but for recording)
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t r_gain : 4;
+        uint8_t rsvd_1 : 4;
+        uint8_t l_gain : 4;
+        uint8_t rsvd_2 : 3;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) record_gain_t;
+
+//record gain of mic data structure
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t r_gain : 4;
+        uint8_t rsvd_1 : 4;
+        uint8_t l_gain : 4;
+        uint8_t rsvd_2 : 3;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) mic_record_gain_t;
+
 // output PCM volume data structure
 typedef union
 {
@@ -1265,6 +1307,7 @@ int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream, uint8_
         ERROR("Writing to the input stream has not been implemented yet!\n");
 
         // TODO: write to the input BDL here 
+        
         return 0;
     }
     else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
@@ -1789,6 +1832,34 @@ int ac97_pci_init(struct naut_info *naut)
                 OUTW(master_vol.val, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
                 OUTW(pcm_vol.val, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
+                //setting recording gain to defaults
+                uint16_t mic_vol_int = INW(state->ioport_start_bar0 + AC97_NAM_MIC_VOL);
+                uint16_t mic_gain_int = INW(state->ioport_start_bar0 + AC97_NAM_MIC_GAIN);
+                uint16_t input_gain_int = INW(state->ioport_start_bar0 + AC97_NAM_IN_GAIN);
+
+                mic_volume_t mic_vol = (mic_volume_t) mic_vol_int;
+                mic_record_gain_t mic_gain = (mic_record_gain_t) mic_gain_int;
+                record_gain_t input_gain = (record_gain_t) input_gain_int;
+
+
+                mic_vol.gain = 0x00000b; // 12db, see OSDEV
+                mic_vol.add_20 = 1; //adding 20db
+                mic_vol.mute = 0;
+                
+                //setting to 10, arbitrary. Stepped by 1.5db
+                mic_gain.mute = 0;
+                mic_gain.r_gain = 10;
+                mic_gain.l_gain = 10;
+
+                //setting to 10, arbitrary. Stepped by 1.5db
+                input_gain.mute = 0;
+                input_gain.r_gain = 10;
+                input_gain.l_gain = 10;
+
+
+                OUTW(mic_vol.val,state->ioport_start_bar0 + AC97_NAM_MIC_VOL);
+                OUTW(mic_gain.val,state->ioport_start_bar0 + AC97_NAM_MIC_GAIN);
+                OUTW(input_gain.val,state->ioport_start_bar0 + AC97_NAM_IN_GAIN);
                 /* 
                 Initialize stream objects to NULL to indicate no stream has been opened of that type. 
                 */
