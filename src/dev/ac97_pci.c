@@ -1487,7 +1487,7 @@ static struct nk_sound_dev_int ops = {
     .get_available_modes = ac97_get_available_modes,
     .open_stream = ac97_open_stream,
     .close_stream = ac97_close_stream,
-    .write_to_stream = NULL,                     // TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
+    .write_to_stream = ac97_write_to_stream,                     // TODO: implement function. Ensure the agreed sampling frequency is set for both the DAC and ADC rates!
     .read_from_stream = NULL,                    // TODO implement function
     .get_stream_params = ac97_get_stream_params, 
     .play_stream = ac97_play_stream,             
@@ -2104,19 +2104,18 @@ int test_ac97_abs()
         DEBUG("Could not retrieve stream params\n");
         return -1;
     }else{
-        for(int i=0; i<num_entries; i++) {
+        for(int i=0; i<params_size; i++) {
             DEBUG("AC97 stream params\ntype: %d\nnum_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
                   params[i].type, params[i].num_of_channels, params[i].sample_rate, params[i].sample_resolution);
         }
     }
-
     // Open stream
     struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params[0]); // just use first option in the list for testing
     if (ac97_stream == -1){
         DEBUG("Could not open stream\n");
         return -1;
     }else{
-        struct ac97_state *state = ac97_device->dev.state;
+        struct ac97_state *state = (struct ac97_state*) ac97_device->dev.state;
         uint16_t gcr_port = state->ioport_start_bar1 + AC97_NABM_CTRL;
         global_control_register_t global_control_register;
         global_control_register.val = INL(gcr_port);
@@ -2124,9 +2123,31 @@ int test_ac97_abs()
         uint16_t sample_rate = INW(DAC_port);
         DEBUG("Opened stream with the following parameters:\nnum_of_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
               (global_control_register.chnl + 1) * 2,  sample_rate, global_control_register.out_mode ? 20 : 16);
+
+        
+        /* Attempt to play sound */
+        // Create one huge sine buffer
+        uint64_t buf_len = 10 * 0x1000;                       // total number of samples
+        uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
+        if (!sine_buf)
+        {
+            nk_vc_printf("Could not sound buffer!\n");
+            return 0;
+        }
+        create_sine_wave(sine_buf, buf_len, 261, 48000); // TODO: does this match sampling freq from device state?
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)sine_buf);
+
+        // TODO: How do we test if this works for sound buffers that are too large to fit in the BDL? 
+        // TODO: Write a function that writes "0" samples to the BDL so it can stay active but not play anything,
+        //       this might make it easier to play continuous sound.
+        nk_sound_dev_write_to_stream(ac97_device, ac97_stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
+
+        nk_sound_dev_play_stream(ac97_device, ac97_stream);
+        nk_sleep(5000000000); // 5 seconds
+        nk_sound_dev_stop_stream(ac97_device, ac97_stream);
     }
 
-    DEBUG("Closing the stream...\n"); 
+    DEBUG("Closing the stream...\n");
     return nk_sound_dev_close_stream(ac97_device, ac97_stream);
 }
 
