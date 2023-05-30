@@ -24,8 +24,6 @@
  * This is free software.  You are permitted to use,
  * redistribute, and modify it as specified in the file "LICENSE.txt".
  */
-
-// TODO: Why don't we get interrupted again after playing entry 0?
 #include <nautilus/nautilus.h>
 #include <nautilus/sounddev.h>
 #include <nautilus/cpu.h>
@@ -50,12 +48,14 @@
 #define DEBUG(fmt, args...) DEBUG_PRINT("ac97_pci: " fmt, ##args)
 #define ERROR(fmt, args...) ERROR_PRINT("ac97_pci: " fmt, ##args)
 
+// TODO: Incorporate these into the driver code to handle MMIO
 #define READ_MEM(d, o) (*((volatile uint32_t *)(((d)->mem_start) + (o))))
 #define WRITE_MEM(d, o, v) ((*((volatile uint32_t *)(((d)->mem_start) + (o)))) = (v))
 
 #define READ_MEM64(d, o) (*((volatile uint64_t *)((d)->mem_start + (o))))
 #define WRITE_MEM64(d, o, v) ((*((volatile uint64_t *)(((d)->mem_start) + (o)))) = (v))
 
+// SECTION: DEVICE SPECIFIC MACROS/CONSTANTS =======================================================================================
 /* Use these macros to easily debug data transfer between host and device */
 #define INB(port) ({uint8_t _x = inb(port); DEBUG("INB found %x at port %x\n", _x, port); _x;})
 #define INW(port) ({uint16_t _x = inw(port); DEBUG("INW found %x at port %x\n", _x, port); _x;})
@@ -102,39 +102,6 @@
 #define MIC_ENTRY_SIZE(i) (((ac97_bdl_entry *)MIC_RING)[(i)].size) // number of samples in the buffer of sound data for the entry at index i
 #define MIC_ENTRY_LAST(i) (((ac97_bdl_entry *)MIC_RING)[(i)].last) // flags to fire an interrupt signaling that this is the last entry in buffer
 #define MIC_ENTRY_IOC(i) (((ac97_bdl_entry *)MIC_RING)[(i)].ioc)   // flags to fire an interrupt when this buffer is fully consumed
-
-/* Not sure what constant variables are necessary for the AC97... come back later and 
-   re-examine the code between this comment and the next SECTION DONE line */
-
-#define RESTART_DELAY 5
-
-/*
-// Constant variables
-// These variables are configurable, and they will change the number of descriptors.
-// The number of descriptors is always a multiple of eight.
-// both tx_dsc_count and rx_dsc_count should be multiple of 16.
-#define TX_DSC_COUNT 128
-#define TX_BLOCKSIZE 256           // bytes available per DMA block
-#define RX_DSC_COUNT 128           // equal to DMA block count
-#define RX_BLOCKSIZE 256           // bytes available per DMA block
-#define RESTART_DELAY 5            // usec = 5 us
-#define RX_PACKET_BUFFER_SIZE 2048 // the size of the packet buffer
-*/
-
-/* SECTION DONE */
-
-// After this line, PLEASE DO NOT CHANGE ANYTHING.
-
-/*
-// transmission unit
-// Data sheet from page 36
-// 16384 bytes is from the maximum packet buffer size that e1000 can receive.
-// 16288 bytes is the maximum packet size that e1000 can send in theory.
-// Ethernet standard MTU is 1500 bytes.
-#define MAX_TU 16384 // maximum transmission unit
-#define MIN_TU 48    // minimum transmission unit
-#define MAC_LEN 6    // the length of the mac address
-*/
 
 // PCI CONFIG SPACE ************************************
 #define INTEL_VENDOR_ID 0x8086
@@ -186,43 +153,9 @@
 #define AC97_REG_BOX_NEXT 0x0A       // number of buffer entry to be processed next
 #define AC97_REG_BOX_CTRL 0x0B       // transfer control
 
-/* Now that I think about it, I think the box might need to be represented with a struct/bitfield. Macros might be used by convention within the code, too. */
-struct ac97_nabm_box_desc     // describes a native audio bus register box
-{
-    // Should this be made into bitfields for each component, or is that overkill?
-    uint32_t* addr;           // physical address of buffer descriptor list
-    uint8_t ape;              // number of actual processed buffer descriptor entry
-    uint8_t total;            // total number of entries in the buffer descriptor list
-    uint16_t status;          // status of transferring data
-    uint16_t trans_samples;   // number of transferred samples in ape
-    uint8_t npe;              // number of next processed buffer entry
-    uint8_t ctrl;             // transfer control 
-};
+// SECTION: USEFUL TYPEDEFS TO REPRESENT DEVICE REGISTERS ============================================================================
 
-struct ac97_nabm_desc                  // describes native audio bus registers 
-{
-    struct ac97_nabm_box_desc input;   // nabm register box for pcm input
-    struct ac97_nabm_box_desc output;  // nabm register box for pcm output
-    struct ac97_nabm_box_desc mic;     // nabm register box for microphone
-    struct 
-    {
-        uint8_t gie         : 1;       // global interrupt enable
-        uint8_t cr          : 1;       // cold reset
-        uint8_t wr          : 1;       // warm reset
-        uint8_t sd          : 1;       // shut down
-        uint16_t rsvd       : 16;      // reserved
-        uint8_t chnl        : 2;       // channels for pcm output 
-        uint8_t out_mode    : 2;       // pcm output mode 
-    } global_ctrl;                     // describes global control register
-    struct 
-    {
-        uint32_t rsvd       : 20;      // reserved
-        uint8_t chnl        : 2;       // channel capabilities
-        uint8_t smpl        : 2;       // sample capabilities
-    } global_status;                   // describes global status register
-} __attribute__((packed));
-
-typedef union {
+typedef union {                        // describes global control register
     uint32_t val :24;
     struct
     {
@@ -233,7 +166,7 @@ typedef union {
         uint16_t rsvd       : 16;      // reserved
         uint8_t chnl        : 2;       // channels for pcm output
         uint8_t out_mode    : 2;       // pcm output mode
-    }__attribute__((packed));          // describes global control register
+    }__attribute__((packed));          
 }__attribute__((packed)) global_control_register_t;
 
 typedef union 
@@ -245,14 +178,99 @@ typedef union
     }__attribute__((packed));
 }__attribute__((packed)) last_valid_entry_t;
 
+typedef union // describes an ac97 bdl entry
+{
+    uint64_t val; // uint32_t data[2] <-- should this be like the mouse_packet struct in ps2.c?
+    struct
+    {
+        uint32_t addr : 32; // physical address to sound data in memory
+        uint16_t size : 16; // number of samples in the buffer this entry describes
+        uint16_t rsvd : 14; // reserved
+        uint8_t last : 1;   // flags last entry of buffer, stop playing
+        uint8_t ioc : 1;    // interrupt fired when data from this entry is transferred
+    } __attribute__((packed));
+} __attribute__((packed)) ac97_bdl_entry;
+
+// master volume data structure
 typedef union
 {
+    uint16_t val;
+    struct
+    {
+        uint8_t r_volume : 6;
+        uint8_t rsvd_1 : 2;
+        uint8_t l_volume : 6;
+        uint8_t rsvd_2 : 1;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) m_volume_t;
 
-};
-
-struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an ac97_state? 
+// output PCM volume data structure
+typedef union
 {
-    // pointer to base class
+    uint16_t val;
+    struct
+    {
+        uint8_t r_volume : 5;
+        uint8_t rsvd_1 : 3;
+        uint8_t l_volume : 5;
+        uint8_t rsvd_2 : 2;
+        uint8_t mute : 1;
+    } __attribute__((packed));
+} __attribute__((packed)) pcm_volume_t;
+
+// global status struct
+typedef union
+{
+    uint32_t val;
+    struct
+    {
+        uint32_t rsvd_1 : 20;
+        uint8_t channel : 2; // channel capabilities
+        uint8_t sample : 2;  // sample capabilities
+        uint8_t rsvd_2 : 8;
+
+    } __attribute__((packed));
+} __attribute__((packed)) global_status_t;
+
+// transfer control data structure
+typedef union
+{
+    uint8_t val;
+    struct
+    {
+        uint8_t dma_control : 1;    // dma controller control
+        uint8_t reset : 1;          // reset
+        uint8_t lbe_interrupt : 1;  // last buffer entry interrupt enabled
+        uint8_t ioc_interrupt : 1;  // ioc interrupt enaled
+        uint8_t fifo_interrupt : 1; // fifo interrupt enabled
+        uint8_t rvsd : 3;
+    } __attribute__((packed));
+} __attribute__((packed)) transfer_control_t;
+
+// transfer status data structure
+typedef union
+{
+    uint16_t val;
+    struct
+    {
+        uint8_t dma_status : 1;      // dma transfer status
+        uint8_t end_of_transfer : 1; // is current entry equal to last valid entry?
+        uint8_t lbe_interrupt : 1;   // last buffer entry interrupt fired
+        uint8_t ioc_interrupt : 1;   // ioc interrupt fired
+        uint8_t fifo_interrupt : 1;  // fifo interrupt fired
+        uint16_t rvsd : 11;          // reserved
+    } __attribute__((packed));
+} __attribute__((packed)) transfer_status_t;
+
+// SECTION: USEFUL STRUCTS TO REPRESENT DEVICE COMPONENTS ============================================================================
+
+static struct list_head dev_list;      // list of discovered devices
+static struct ac97_state *dirty_state; // TODO: clean this and its references from this file
+
+struct ac97_state
+{
+    // pointer to base class, must be first member
     struct nk_sound_dev *sounddev;
 
     // pci interrupt and interrupt vector
@@ -277,7 +295,7 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
 
     // The following hide the details of the PCI BARs, since
     // we only have one block of registers
-    enum { NONE, IO, MEMORY}  method;
+    enum {NONE, IO, MEMORY}  method;
 
     // Device name uponr registration in Nautilus
     char name[DEV_NAME_LEN];
@@ -295,7 +313,7 @@ struct ac97_state // TODO: Shouldn't we have an ac97_dev class that contains an 
 
     // The AC97 can support up to 1 input stream. The user application must support mixing. 
     struct nk_sound_dev_stream* output_stream; // TODO: name this output_stream when we adapt the code to support both
-    struct nk_sound_dev_stream* INPUT_STREAM; 
+    struct nk_sound_dev_stream* input_stream; 
 
     // TODO: What else do we need to add?
 };
@@ -318,93 +336,8 @@ struct ac97_bdl_desc
     uint8_t size;     // effective size of ring (number of ac97_bdl_entry objects)
 };
 
-typedef union // describes an ac97 bdl entry
-{
-    uint64_t val; // uint32_t data[2] <-- should this be like the mouse_packet struct in ps2.c?
-    struct
-    {
-        uint32_t addr : 32;      // physical address to sound data in memory
-        uint16_t size : 16;      // number of samples in the buffer this entry describes
-        uint16_t rsvd : 14;      // reserved
-        uint8_t last : 1;        // flags last entry of buffer, stop playing
-        uint8_t ioc : 1;         // interrupt fired when data from this entry is transferred
-    } __attribute__((packed));
-} __attribute__((packed)) ac97_bdl_entry;
-
-//master volume data structure
-typedef union
-{
-    uint16_t val;
-    struct
-    {
-        uint8_t r_volume: 6; 
-        uint8_t rsvd_1: 2;    
-        uint8_t l_volume: 6; 
-        uint8_t rsvd_2: 1;
-        uint8_t mute: 1; 
-    } __attribute__((packed)) ;
-} __attribute__((packed)) m_volume_t;
-
-// output PCM volume data structure
-typedef union
-{
-    uint16_t val;
-    struct
-    {
-        uint8_t r_volume : 5;
-        uint8_t rsvd_1 : 3;
-        uint8_t l_volume : 5;
-        uint8_t rsvd_2 : 2;
-        uint8_t mute : 1;
-    } __attribute__((packed));
-} __attribute__((packed)) pcm_volume_t;
-
-//global status struct
-typedef union
-{
-    uint32_t val;
-    struct
-    {
-        uint32_t rsvd_1: 20;  
-        uint8_t channel: 2;     // channel capabilities
-        uint8_t sample: 2; // sample capabilities
-        uint8_t rsvd_2: 8;
-           
-    } __attribute__((packed)) ;
-} __attribute__((packed)) global_status_t;
-
-//transfer control data structure
-typedef union
-{
-    uint8_t val;
-    struct
-    {
-        uint8_t dma_control: 1;  // dma controller control
-        uint8_t reset: 1;     // reset
-        uint8_t lbe_interrupt: 1; // last buffer entry interrupt enabled
-        uint8_t ioc_interrupt: 1; //ioc interrupt enaled
-        uint8_t fifo_interrupt: 1;     // fifo interrupt enabled
-        uint8_t rvsd: 3;
-    } __attribute__((packed)) ;
-} __attribute__((packed)) transfer_control_t;
-
-// transfer status data structure
-typedef union
-{
-    uint16_t val;
-    struct
-    {
-        uint8_t dma_status      : 1;  // dma transfer status
-        uint8_t end_of_transfer : 1;  // is current entry equal to last valid entry?
-        uint8_t lbe_interrupt   : 1;  // last buffer entry interrupt fired
-        uint8_t ioc_interrupt   : 1;  // ioc interrupt fired
-        uint8_t fifo_interrupt  : 1;  // fifo interrupt fired
-        uint16_t rvsd : 11;           // reserved
-    } __attribute__((packed));
-} __attribute__((packed)) transfer_status_t;
-
-
-double new_sin(double x){
+// SECTION: HELPER FUNCTIONS FOR CREATING SOUND ===================================================================================
+static double new_sin(double x){
     x = x * 180 / M_PI;
 
     while(x < 0){
@@ -449,23 +382,214 @@ static void create_sine_wave(uint16_t *buffer, uint64_t buffer_len, uint64_t ton
     //}
 }
 
-static int print_bdl_out(struct ac97_state *state)
+// SECTION: HELPER FUNCTIONS FOR DEBUGGING SOUND =====================================================================================
+
+static int print_bdl_out(struct ac97_state *state, uint8_t stream_type)
 {
     /*
-    Prints the contents of the PCM Output Box's Buffer Descriptor List to the Debug console.
+    Helper function that prints the contents of a Box's Buffer Descriptor List to the Debug console.
+
+    Use 'stream_type' = 0 to print the PCM IN BDL, and 'stream_type' = 1 to print the PCM OUT BDL
+
+    NOTE: The macros used below will only work if the ac97_state* is named 'state'
     */
-    DEBUG("Printing the contents of the PCM OUT BDL...\n");
-    for (int i = 0; i < BDL_MAX_SIZE; i++)
+    if (stream_type == 0)
     {
-        ac97_bdl_entry entry = OUT_ENTRY(i);
-        DEBUG("Entry %d: %016lx\n", i, entry.val);
+        DEBUG("Printing the contents of the PCM IN BDL...\n");
+        for (int i = 0; i < BDL_MAX_SIZE; i++)
+        {
+            ac97_bdl_entry entry = IN_ENTRY(i);
+            DEBUG("Entry %d: %016lx\n", i, entry.val);
+        }
+        return 0;
     }
-    return 0;
+    else if (stream_type == 1)
+    {
+        DEBUG("Printing the contents of the PCM OUT BDL...\n");
+        for (int i = 0; i < BDL_MAX_SIZE; i++)
+        {
+            ac97_bdl_entry entry = OUT_ENTRY(i);
+            DEBUG("Entry %d: %016lx\n", i, entry.val);
+        }
+        return 0;
+    }
+    else
+    {
+        ERROR("Unrecognized 'stream_type' parameter value!\n");
+        return -1;
+    }
 }
 
-// // list of discovered devices
-static struct list_head dev_list;
-static struct ac97_state *dirty_state; 
+// SECTION: DEVICE HELPER FUNCTIONS FOR MANAGING SOUND ===============================================================================
+
+static int ac97_init_output_bdl(struct ac97_state *state)
+{
+    /*
+    Helper function to initialize and allocate the PCM OUT Buffer Descriptor List of an AC97 Device
+
+    NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
+    */
+
+    /* Allocate the BDL Description object for the PCM OUT box */
+    DEBUG("Allocating BDL description for PCM OUT box\n");
+    void *bdl_pointer = malloc(sizeof(struct ac97_bdl_desc));
+    if (!bdl_pointer)
+    {
+        ERROR("Cannot allocate description for the BDL of the PCM OUT box\n");
+        return -1;
+    }
+    BDL_OUT = (struct ac97_bdl_desc *)bdl_pointer; // the ac97_state expects a ac97_bdl_desc*
+
+    /* Now allocate the BDL Ring, a contiguous space of size BDL_MAX_SIZE*sizeof(ac97_bdl_entry) */
+    DEBUG("Allocating the BDL ring buffer for the PCM OUT box\n");
+    OUT_RING = malloc(BDL_MAX_SIZE * sizeof(ac97_bdl_entry)); // the ac97_state expects a void* (macros cast it as needed)
+    if (!OUT_RING)
+    {
+        ERROR("Cannot allocate the BDL ring buffer of the PCM OUT box\n");
+        return -1;
+    }
+    memset(OUT_RING, 0, BDL_MAX_SIZE * sizeof(ac97_bdl_entry)); // initialize entries to 0s
+
+    /* Set other state variables to indicate empty BDL */
+    DEBUG("Describing an empty BDL in the PCM OUT box\n");
+    OUT_HEAD = 0;
+    OUT_TAIL = 0;
+    OUT_SIZE = 0;
+
+    /*
+    Set reset bit of output channel and wait for card to clear it
+    */
+    DEBUG("Setting reset bit of output box...\n");
+    uint8_t tc_int = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+    transfer_control_t tc = (transfer_control_t)tc_int;
+    tc.reset = 1;
+    OUTB(tc.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+
+    // Wait for device to clear the reset bit
+    while (true)
+    {
+        uint8_t tc_int = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc = (transfer_control_t)tc_int;
+        if (tc.reset == 0)
+            break;
+        else
+            nk_sleep(100000000); // 100 ms
+    }
+    DEBUG("Device has cleared the reset bit...\n");
+
+    /*
+    Write physical position of BDL to output NABM register
+    */
+    // Write phyiscal position of BDL to the output box
+    DEBUG("Telling device that the BDL is located at %x...\n", OUT_RING);
+    OUTL((uint32_t)OUT_RING, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+
+    return 0; // indicate success
+}
+
+static int ac97_deinit_output_bdl(struct ac97_state *state)
+{
+    /* Helper function to deallocate and remove the Buffer Descripor List of an AC97 Device */
+    // NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
+    DEBUG("Deallocating the BDL ring buffer for the PCM OUT box\n");
+
+    /* We're assuming the caller is responsible for freeing the buffers that BDL entries point to
+    for (int i=0; i < BDL_MAX_SIZE; i++) // Free all buffer entries pointed to by the BDL
+        {free((void*) OUT_ENTRY_ADDR(i));}
+    */
+    free(OUT_RING); // free the pointer to the base address of the BDL
+
+    DEBUG("Deallocating the BDL description for the PCM OUT box\n");
+    free((void *)BDL_OUT); // then free the BDL description object
+
+    return 0; // indicate success
+}
+
+static int ac97_init_input_bdl(struct ac97_state *state)
+{
+    /*
+    Helper function to initialize and allocate the PCM IN Buffer Descriptor List of an AC97 Device
+
+    NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
+    */
+
+    /* Allocate the BDL Description object for the PCM OUT box */
+    DEBUG("Allocating BDL description for PCM IN box\n");
+    void *bdl_pointer = malloc(sizeof(struct ac97_bdl_desc));
+    if (!bdl_pointer)
+    {
+        ERROR("Cannot allocate description for the BDL of the PCM IN box\n");
+        return -1;
+    }
+    BDL_IN = (struct ac97_bdl_desc *)bdl_pointer; // the ac97_state expects a ac97_bdl_desc*
+
+    /* Now allocate the BDL Ring, a contiguous space of size BDL_MAX_SIZE*sizeof(ac97_bdl_entry) */
+    DEBUG("Allocating the BDL ring buffer for the PCM OUT box\n");
+    IN_RING = malloc(BDL_MAX_SIZE * sizeof(ac97_bdl_entry)); // the ac97_state expects a void* (macros cast it as needed)
+    if (!IN_RING)
+    {
+        ERROR("Cannot allocate the BDL ring buffer of the PCM IN box\n");
+        return -1;
+    }
+    memset(IN_RING, 0, BDL_MAX_SIZE * sizeof(ac97_bdl_entry)); // initialize entries to 0s
+
+    /* Set other state variables to indicate empty BDL */
+    DEBUG("Describing an empty BDL in the PCM IN box\n");
+    IN_HEAD = 0;
+    IN_TAIL = 0;
+    IN_SIZE = 0;
+
+    /*
+    Set reset bit of input channel and wait for card to clear it
+    */
+    DEBUG("Setting reset bit of input box...\n");
+    uint8_t tc_int = INB(state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+    transfer_control_t tc = (transfer_control_t)tc_int;
+    tc.reset = 1;
+    OUTB(tc.val, state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+
+    // Wait for device to clear the reset bit
+    while (true)
+    {
+        uint8_t tc_int = INB(state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
+        transfer_control_t tc = (transfer_control_t)tc_int;
+        if (tc.reset == 0)
+            break;
+        else
+            nk_sleep(100000000); // 100 ms
+    }
+    DEBUG("Device has cleared the reset bit...\n");
+
+    /*
+    Write physical position of BDL to input NABM register
+    */
+    // Write phyiscal position of BDL to the input box
+    DEBUG("Telling device that the BDL is located at %x...\n", IN_RING);
+    OUTL((uint32_t)IN_RING, state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_ADDR);
+
+    return 0; // indicate success
+}
+
+static int ac97_deinit_input_bdl(struct ac97_state *state)
+{
+    /*
+    Helper function to deallocate and remove the PCM IN Buffer Descripor List of an AC97 Device
+
+    NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
+    */
+    DEBUG("Deallocating the BDL ring buffer for the PCM IN box\n");
+
+    /* We're assuming the caller is responsible for freeing the buffers that BDL entries point to
+    for (int i=0; i < BDL_MAX_SIZE; i++) // Free all buffer entries pointed to by the BDL
+        {free((void*) OUT_ENTRY_ADDR(i));}
+    */
+    free(IN_RING); // free the pointer to the base address of the BDL
+
+    DEBUG("Deallocating the BDL description for the PCM OUT box\n");
+    free((void *)BDL_IN); // then free the BDL description object
+
+    return 0; // indicate success
+}
 
 static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_params *params)
 {
@@ -562,6 +686,135 @@ static void ac97_set_sound_params(struct ac97_state *state, struct nk_sound_dev_
     return;
 }
 
+static uint64_t divideAndRoundUp(uint64_t num)
+{
+    /*
+    Helper function to fix the TODO below when calculating how many buffers the block of sound data would fill
+    */
+    uint64_t quotient = num / BDL_ENTRY_MAX_SIZE;  // Divide by 0xFFFE
+    uint64_t remainder = num % BDL_ENTRY_MAX_SIZE; // Calculate remainder
+
+    if (remainder > 0)
+    {
+        quotient++; // Round up if remainder is greater than 0
+    }
+
+    return quotient;
+}
+
+static int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint16_t num_samples)
+{
+    /* Recieves a pointer to a chunk of data in memory, and the size of the buffer.
+       This function assumes the buffer is compliant with the byte granularity decided upon in the ac97_state.
+
+        NOTE: The inputted ac97_state must be named 'state' for macros to work properly
+        NOTE: This function assumes the user is responsible for chopping up data into buffers with at most 0xFFFE samples
+    */
+
+    /* Our code maintains the buffer size; we don't want to overwrite unconsumed buffer entries */
+    // TODO: Since this is a helper function, I think we can eventually assume that it is being called correctly (these checks should never signal an error in practice)
+    if (OUT_SIZE == BDL_MAX_SIZE)
+    {
+        ERROR("Attempted to overwrite an unconsumed buffer entry!\n");
+        return -1;
+    }
+
+    /* Check input buffer size for compliance with what the AC97 expects */
+    if (num_samples > BDL_ENTRY_MAX_SIZE)
+    {
+        ERROR("Attempted to write a buffer with too many samples for an AC97!\n");
+        return -1;
+    }
+
+    /* Write the buffer entry */
+    uint8_t write_pos = OUT_TAIL; // tail will always point to the next writeable position
+
+    DEBUG("Updating the PCM OUT BDL entry at position 0x%x\n", write_pos);
+    OUT_ENTRY_ADDR(write_pos) = (uint32_t)buffer; // cast void* to a uint32_t (must be under 4GB memory)
+    OUT_ENTRY_SIZE(write_pos) = num_samples;
+    OUT_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
+    OUT_ENTRY_IOC(write_pos) = 1;  // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
+    DEBUG("BDL entry now states: %016lx\n", OUT_ENTRY(write_pos).val);
+
+    /* Tell the device what the new last valid entry is */
+    last_valid_entry_t lve;
+    lve.last_entry = write_pos; // BDL_INC(write_pos, 1)?
+    lve.rsvd = 0;
+    DEBUG("Reporting to device the new last valid entry...\n");
+    OUTB(lve.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
+
+    /*
+    Manage our BDL Ring's state variables
+    */
+    OUT_TAIL = BDL_INC(write_pos, 1); // increment the tail
+
+    /* Turn off the last bit of the previous entry; we just wrote the new last */
+    if (OUT_SIZE > 0)
+    {
+        // Is there a nice macro for BDL_DEC that wraps around?
+        if (write_pos == 0)
+            write_pos = 31;
+        else
+            write_pos -= 1;
+        OUT_ENTRY_LAST(write_pos) = 0;
+    }
+
+    OUT_SIZE += 1; // update effective size of BDL
+
+    return 0;
+}
+
+// TODO: handle the usage of callbacks. Right now implementation is non blocking
+static int ac97_write_to_output_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
+                                    void (*callback)(nk_sound_dev_status_t status, void *context),
+                                    void *context)
+{
+    /*
+    Helper function called by ac97_write_to_stream that writes a block of sound data to the BDL of
+    the PCM OUT box.
+
+    NOTE: For macros to work properly, the passed ac97_state* must be named 'state'
+    */
+    // Check the src pointer for correct alignment. The AC97 expects even addresses for sound data.
+    if (!src || (uint32_t)src & 1)
+    {
+        ERROR("The pointer to sound data is illegal!\n");
+        return -1;
+    }
+
+    // Use output stream parameters to decide count how many samples we have
+    nk_sound_dev_sample_resolution_t res = state->output_stream->params.sample_resolution;
+    uint64_t total_samples = (res == NK_SOUND_DEV_SAMPLE_RESOLUTION_16) ? (len / 2) : (len / 4);
+    DEBUG("Total number of samples to write: %d\n", total_samples);
+
+    // Find how many buffers we have and how many this block of sound data would take up
+    uint8_t buffers_available = BDL_MAX_SIZE - OUT_SIZE;
+    uint64_t buffers_required = divideAndRoundUp(total_samples);
+    // uint8_t buffers_required = (uint8_t)(((double)n_samples / (double)BDL_ENTRY_MAX_SIZE) + 1); // TODO: Fix,this will break when n_samples % bdl_entry_max_size = 0...ceil is like sin: returns itself.
+    DEBUG("Buffers required: %d, Buffers available: %d\n", buffers_required, buffers_available);
+
+    // Place as many sound buffers as possible before erroring so the logic in sounddev.c can handle a potential callback
+    for (int i = 0; i < buffers_required; i++)
+    {
+        if (buffers_available == 0)
+        {
+            ERROR("The PCM OUT BDL has ran out of space!\n");
+            return -1;
+        }
+        uint16_t num_samples = (i == (buffers_required - 1)) ? total_samples : BDL_ENTRY_MAX_SIZE;
+        ac97_produce_out_buffer(state, (void *)(src + BDL_ENTRY_MAX_SIZE * i), num_samples);
+
+        // Manage loop variables
+        total_samples -= BDL_ENTRY_MAX_SIZE; // used for last iteration to init 'num_samples'
+        buffers_available--;
+    }
+
+    // Success when all of the data has been successfully written
+    return 0;
+}
+
+// SECTION: DEVICE INTERFACE FUNCTIONS FOR PLAYING SOUND ============================================================================
+
 int ac97_get_available_modes(void *state, struct nk_sound_dev_params params[], uint32_t params_size)
 {
     /*
@@ -636,54 +889,6 @@ int ac97_get_available_modes(void *state, struct nk_sound_dev_params params[], u
     return idx; // return total number of possible options; user can use this to ensure their pre-allocated 'params' array is large enough 
 }
 
-static int verify_stream(struct ac97_state *state, )
-{
-    // This code ensures the inputted stream has been opened before we attempt to close it.
-    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
-    {
-        if (ac_state->INPUT_STREAM == NULL)
-        {
-            ERROR("Attempting to play from an input stream, but one hasn't been opened!\n");
-            return -1;
-        }
-        else if (stream != ac_state->INPUT_STREAM)
-        {
-            // TODO: Is this a sufficient input check for equivalence in C?
-            ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
-            return -1;
-        }
-
-        // Free stream pointers in device state and set to null
-        DEBUG("Deallocating the stream struct in device state\n");
-        free(ac_state->INPUT_STREAM);  // this also frees the 'stream' that was passed in
-        ac_state->INPUT_STREAM = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
-    }
-    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
-    {
-        if (ac_state->stream == NULL)
-        {
-            ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
-            return -1;
-        }
-        else if (stream != ac_state->stream)
-        {
-            // TODO: Is this a sufficient input check for equivalence in C?
-            ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
-            return -1;
-        }
-
-        // Free stream pointers in device state and set to null
-        DEBUG("Deallocating the stream struct in device state\n");
-        free(ac_state->stream);  // this also frees the 'stream' that was passed in
-        ac_state->stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
-    }
-    else
-    {
-        ERROR("Inputted stream type is unrecognizable!\n");
-        return -1;
-    }
-}
-
 struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_params *params)
 {
     /*
@@ -693,36 +898,37 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
     struct ac97_state *ac_state = (struct ac97_state*) state;
 
     // This code ensures the inputted stream has been opened before we attempt to close it.
-    if (params.type == NK_SOUND_DEV_INPUT_STREAM)
+    if (params->type == NK_SOUND_DEV_INPUT_STREAM)
     {
         // check that another stream has not been allocated
-        if (ac_state->INPUT_STREAM != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
+        if (ac_state->input_stream != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
         {
             ERROR("Attempted to open a second input stream, but the AC97 only supports one!\n");
             return -1;
         }
 
         // allocate the stream on the heap, set defaults
-        ac_state->INPUT_STREAM = (struct nk_sound_dev_stream *)malloc(sizeof(struct nk_sound_dev_stream));
-        if (!ac_state->INPUT_STREAM)
+        ac_state->input_stream = (struct nk_sound_dev_stream*) malloc(sizeof(struct nk_sound_dev_stream));
+        if (!ac_state->input_stream)
         {
             ERROR("Could not allocate input stream!\n");
             return -1;
         }
-        ac_state->INPUT_STREAM->stream_id = 0;         // input streams will have stream_id = 0
-        ac_state->INPUT_STREAM->params = *params;      // TODO: Should the device assume the parameters are compatible, or should it validate them?
-        
-        ac97_set_sound_params(ac_state, params, 0); // TODO: Change set_sound_params to handle input and output logic
+        ac_state->input_stream->stream_id = 0;         // input streams will have stream_id = 0
+        ac_state->input_stream->params = *params;      // TODO: Should the device assume the parameters are compatible, or should it validate them?
+
+        ac97_set_sound_params(ac_state, params); // WARNING: this will overwrite output stream parameters if an output stream was opened first
+
         // TODO: Init the correct BDL based on the stream type
         // init input bdl
-        if (ac97_init_bdl(ac_state, 0) == -1)
+        if (ac97_init_input_bdl(ac_state) == -1)
         {
             return -1;
         }
 
-        return ac_state->INPUT_STREAM;
+        return ac_state->input_stream;
     }
-    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    else if (params->type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
         // check that another stream has not been allocated
         if (ac_state->output_stream != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
@@ -738,14 +944,14 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
             ERROR("Could not allocate output stream!\n");
             return -1;
         }
-        ac_state->output_stream->stream_id = 0;    // input streams will have stream_id = 0
+        ac_state->output_stream->stream_id = 1;    // output streams will have stream_id = 1
         ac_state->output_stream->params = *params; // TODO: Should the device assume the parameters are compatible, or should it validate them?
 
-        ac97_set_sound_params(ac_state, params, 1); // TODO: Change set_sound_params to handle input and output logic
+        ac97_set_sound_params(ac_state, params); // WARNING: this will overwrite input stream parameters if an input stream was opened first
 
         // TODO: Init the correct BDL based on the stream type
         // init output bdl
-        if (ac97_init_bdl(ac_state, 1) == -1)
+        if (ac97_init_output_bdl(ac_state) == -1)
         {
             return -1;
         }
@@ -775,31 +981,38 @@ int ac97_close_stream(void* state, struct nk_sound_dev_stream *stream){
     // This code ensures the inputted stream has been opened before we attempt to close it. 
     if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
     {   
-        if (ac_state->INPUT_STREAM == NULL)
+        if (ac_state->input_stream == NULL)
         {
             ERROR("Attempting to play from an input stream, but one hasn't been opened!\n");
             return -1;
         }
-        else if (stream != ac_state->INPUT_STREAM)
+        else if (stream != ac_state->input_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C?
-            ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
+            ERROR("Attempted to close a second input stream, but the AC97 only supports one!\n");
             return -1;
         }
 
         // Free stream pointers in device state and set to null
         DEBUG("Deallocating the stream struct in device state\n");
-        free(ac_state->INPUT_STREAM); // this also frees the 'stream' that was passed in
-        ac_state->INPUT_STREAM = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+        free(ac_state->input_stream); // this also frees the 'stream' that was passed in
+        ac_state->input_stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+        
+        // Now free BDL since it is associated with the input stream
+        if (ac97_deinit_input_bdl(ac_state) != 0) {
+            ERROR("Error while deinitializing the BDL for the input stream!\n");
+            return -1;
+        }
+        return 0;
     }
     else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
-        if (ac_state->stream == NULL)
+        if (ac_state->output_stream == NULL)
         {
             ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
             return -1;
         }
-        else if (stream != ac_state->stream)
+        else if (stream != ac_state->output_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C?
             ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
@@ -808,21 +1021,23 @@ int ac97_close_stream(void* state, struct nk_sound_dev_stream *stream){
 
         // Free stream pointers in device state and set to null
         DEBUG("Deallocating the stream struct in device state\n");
-        free(ac_state->stream);  // this also frees the 'stream' that was passed in
-        ac_state->stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+        free(ac_state->output_stream);  // this also frees the 'stream' that was passed in
+        ac_state->output_stream = NULL; // 'ac97_open_stream' checks if this is NULL to see if we have an active stream already
+
+        // Now free BDL since it is associated with the input stream
+        if (ac97_deinit_output_bdl(ac_state) != 0)
+        {
+            ERROR("Error while deinitializing the BDL for the output stream!\n");
+            return -1;
+        }
+        return 0;
     }
     else
     {
         ERROR("Inputted stream type is unrecognizable!\n");
         return -1;
     }
-
-    // The BDL is associated with the stream, so we should free it when the user decides to close it
-    ac97_deinit_output_bdl(ac_state);
-    return 0;
 }
-
-
 
 int ac97_get_stream_params(void *state, struct nk_sound_dev_stream *stream, struct nk_sound_dev_params *p)
 {
@@ -845,12 +1060,12 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
     // This code ensures the inputted stream has been opened before we activate the DMA
     if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
     {
-        if (ac_state->INPUT_STREAM == NULL)
+        if (ac_state->input_stream == NULL)
         {
             ERROR("Attempting to play from an input stream, but one hasn't been opened!\n"); 
             return -1;
         }
-        else if (stream != ac_state->INPUT_STREAM)
+        else if (stream != ac_state->input_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C? 
             ERROR("Attempted to play from a second input stream, but the AC97 only supports one!\n");
@@ -858,7 +1073,7 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
         }
 
         // print the BDL before we consume it
-        print_bdl_out(ac_state);
+        print_bdl_out(ac_state, 0);
 
         // grabbing struct, setting relevant field, rewriting
         uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
@@ -875,12 +1090,12 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
     }
     else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
-        if (ac_state->stream == NULL)
+        if (ac_state->output_stream == NULL)
         {
             ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
             return -1;
         }
-        else if (stream != ac_state->stream)
+        else if (stream != ac_state->output_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C?
             ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
@@ -888,7 +1103,7 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
         }
 
         // print the BDL before we consume it
-        print_bdl_out(ac_state);
+        print_bdl_out(ac_state, 1);
 
         // grabbing struct, setting relevant field, rewriting
         uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
@@ -918,21 +1133,17 @@ int ac97_stop_stream(void *state, struct nk_sound_dev_stream *stream)
     // This code ensures the inputted stream has been opened before we activate the DMA
     if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
     {
-        if (ac_state->INPUT_STREAM == NULL)
+        if (ac_state->input_stream == NULL)
         {
             ERROR("Attempting to stop an input stream, but one hasn't been opened!\n");
             return -1;
         }
-        else if (stream != ac_state->INPUT_STREAM)
+        else if (stream != ac_state->input_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C?
             ERROR("Attempted to stop a second input stream, but the AC97 only supports one!\n");
             return -1;
         }
-
-        // print the BDL before we consume it
-        print_bdl_out(ac_state);
-
         // grabbing struct, setting relevant field, rewriting
         uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
         transfer_control_t tc_td = (transfer_control_t)tc_int_td;
@@ -942,27 +1153,23 @@ int ac97_stop_stream(void *state, struct nk_sound_dev_stream *stream)
         tc_td.ioc_interrupt = 1;
         tc_td.fifo_interrupt = 1;
 
-        DEBUG("Setting bit to transfer data...\n");
+        DEBUG("Setting bit to stop transfer of data...\n");
         OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_CTRL);
         return 0;
     }
     else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
-        if (ac_state->stream == NULL)
+        if (ac_state->output_stream == NULL)
         {
             ERROR("Attempting to stop an output stream, but one hasn't been opened!\n");
             return -1;
         }
-        else if (stream != ac_state->stream)
+        else if (stream != ac_state->output_stream)
         {
             // TODO: Is this a sufficient input check for equivalence in C?
             ERROR("Attempted to stop a second output stream, but the AC97 only supports one!\n");
             return -1;
         }
-
-        // print the BDL before we consume it
-        print_bdl_out(ac_state);
-
         // grabbing struct, setting relevant field, rewriting
         uint8_t tc_int_td = INB(ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
         transfer_control_t tc_td = (transfer_control_t)tc_int_td;
@@ -972,7 +1179,7 @@ int ac97_stop_stream(void *state, struct nk_sound_dev_stream *stream)
         tc_td.ioc_interrupt = 1;
         tc_td.fifo_interrupt = 1;
 
-        DEBUG("Setting bit to transfer data...\n");
+        DEBUG("Setting bit to stop transfer of data...\n");
         OUTB(tc_td.val, ac_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
         return 0;
     }
@@ -1028,150 +1235,66 @@ static void probe_variable_sample_rates(struct ac97_state *state)
     }
 }
 
-int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint16_t num_samples)
+
+int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream, uint8_t *src, uint64_t len,
+                         void (*callback)(nk_sound_dev_status_t status, void *context),
+                         void *context) 
 {
-    /* Recieves a pointer to a chunk of data in memory, and the size of the buffer.
-       This function assumes the buffer is compliant with the byte granularity decided upon in the ac97_state.
-
-        NOTE: The inputted ac97_state must be named 'state' for macros to work properly
-        NOTE: This function assumes the user is responsible for chopping up data into buffers with at most 0xFFFE samples
-    */
-
-    /* Our code maintains the buffer size; we don't want to overwrite unconsumed buffer entries */
-    /* TODO: Should there be some queue of next buffer entries to process? If so, we should add
-             this request to the queue instead of raising an error */
-    if (OUT_SIZE == BDL_MAX_SIZE)
-    {
-        ERROR("Attempted to overwrite an unconsumed buffer entry!\n");
-        return -1;
-    }
-
-    /* Check input buffer size for compliance with what the AC97 expects */
-    if (num_samples > BDL_ENTRY_MAX_SIZE)
-    {
-        ERROR("Attempted to write a buffer with too many samples for an AC97!\n");
-        return -1;
-    }
-
-    /* Write the buffer entry */
-    uint8_t write_pos = OUT_TAIL;                 // tail will always point to the next writeable position
-    
-    DEBUG("Updating the PCM OUT BDL entry at position 0x%x\n", write_pos);
-    OUT_ENTRY_ADDR(write_pos) = (uint32_t) buffer; // cast void* to a uint32_t (must be under 4GB memory)
-    OUT_ENTRY_SIZE(write_pos) = num_samples;
-    OUT_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
-    OUT_ENTRY_IOC(write_pos) = 1;  // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
-    DEBUG("BDL entry now states: %016lx\n", OUT_ENTRY(write_pos).val);
-
-    /* Tell the device what the new last valid entry is */
-    last_valid_entry_t lve;
-    lve.last_entry = write_pos; // BDL_INC(write_pos, 1)?
-    lve.rsvd = 0;
-    DEBUG("Reporting to device the new last valid entry...\n");
-    OUTB(lve.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TOTAL);
-
     /*
-    Manage our BDL Ring's state variables
+    Writes sound data to the specified stream. 'src' points to a large chunk of sound data, which must
+    be in the format agreed upon by the stream. The AC97 supports 16-bit quality in 16-bit boundaries, or
+    20-bit quality in 32-bit boundaries. 'len' is the size of the sound data, in BYTES (not samples). 
     */
-    OUT_TAIL = BDL_INC(write_pos, 1); // increment the tail
+    DEBUG("Writing to a stream\n");
+    struct ac97_state* ac_state = (struct ac97_state*) state;
 
-    /* Turn off the last bit of the previous entry; we just wrote the new last */
-    if (OUT_SIZE > 0)
+    // This code ensures the inputted stream has been opened before we write
+    if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM)
     {
-        // Is there a nice macro for BDL_DEC that wraps around?
-        if (write_pos == 0)
-            write_pos = 31;
+        if (ac_state->input_stream == NULL)
+        {
+            ERROR("Attempting to write to an input stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->input_stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to write to a second input stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+        ERROR("Writing to the input stream has not been implemented yet!\n");
+
+        // TODO: write to the input BDL here 
+        return 0;
+    }
+    else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
+    {
+        if (ac_state->output_stream == NULL)
+        {
+            ERROR("Attempting to write to an output stream, but one hasn't been opened!\n");
+            return -1;
+        }
+        else if (stream != ac_state->output_stream)
+        {
+            // TODO: Is this a sufficient input check for equivalence in C?
+            ERROR("Attempted to write to a second output stream, but the AC97 only supports one!\n");
+            return -1;
+        }
+        DEBUG("Writing to the input stream\n");
+
+        // Write to the output BDL
+        if (ac97_write_to_output_bdl(state, src, len, callback, context) == 0) return 0;
         else
-            write_pos -= 1;
-        OUT_ENTRY_LAST(write_pos) = 0;
+        {
+            ERROR("Problem writing sound data to the output BDL stream!\n");
+            return -1;
+        }
     }
-
-    OUT_SIZE += 1; // update effective size of BDL
-
-    return 0;
-}
-
-int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
-                        uint8_t *src, uint64_t len,
-                        void (*callback)(nk_sound_dev_status_t status,
-                                         void *context),
-                        void *context) 
-{
-  DEBUG("Writing to stream\n");
-
-  if (!state) {
-    ERROR("The device state pointer is null\n");
-    return -1;
-  }
-  //we don't care if stream param is null because there is only one stream in the AC97
-  /* if (!stream) {
-    ERROR("The stream pointer is null\n");
-    return -1;
-  } */
-
-  struct ac97_state *ac_state = (struct ac97_state*) state;
-  if (!ac_state->stream) {
-    ERROR("Stream has not been opened yet\n");
-    return -1;
-  }
-
-  // initialize BDL
-  DEBUG("Writing data to BDL\n");
-  if (ac97_write_to_bdl(ac_state, src, len, callback, context)) {
-    ERROR("BDL write failed\n");
-    return -1;
-  }
-  DEBUG("Completed BDL write\n");
-
-  return 0;
-}
-
-//TODO: handle the usage of callbacks. Right now implementation is non blocking
-int ac97_write_to_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
-                        void (*callback)(nk_sound_dev_status_t status,
-                                         void *context),
-                        void *context )
-{
-
-    if(!src){
-        ERROR("The src pointer is null\n");
+    else 
+    {
+        ERROR("Inputted stream type is unrecognizable!\n");
         return -1;
     }
-
-    if((*src & 1) != 0){
-        ERROR("The src address must be even\n");
-        return -1;
-    }
-
-    uint8_t n_available_buffers = BDL_MAX_SIZE - OUT_SIZE;
-
-    //assuming use of 16 bit samples, and len is given in number of bytes (a byte might get cutoff, should I use ceil here too?)
-    uint64_t n_samples = len / 2;
-    DEBUG("Total number of samples %d\n", n_samples);
-
-    //TODO: Fix,this will break when n_samples % bdl_entry_max_size = 0...ceil is like sin: returns itself.
-    uint8_t buffers_required =(uint8_t)  ( ((double) n_samples/ (double) BDL_ENTRY_MAX_SIZE)+ 1);
-    DEBUG("Buffers required: %d\n", buffers_required);
-
-    if(buffers_required > n_available_buffers){
-        ERROR("BDL does not have enough space for sound data, %d buffers required and %d open spots\n",buffers_required,n_available_buffers);
-        return -1;
-    }
-
-    //chopping up samples into buffer entries and placing them in bdl
-    for (int i = 0; i < buffers_required; i++) {
-            DEBUG("Buffer %d will be at address %x\n", i, (uint32_t)(src + (i * 0xFFFE)));
-            if (n_samples >= 0xFFFE){
-                 ac97_produce_out_buffer(state, src + (i * 0xFFFE), 0xFFFE); // TODO: Is alignment okay here? Seemed sketchy during OH
-                 n_samples -= 0xFFFE;
-            }
-            else{
-                ac97_produce_out_buffer(state,src + ((i*0xFFFE)), (uint16_t) n_samples);
-                n_samples = 0;
-            }    
-    }
-
-    return 0;
 }
 
 static int write_to_bdl_test(char *buf, void *priv)
@@ -1194,10 +1317,7 @@ static int write_to_bdl_test(char *buf, void *priv)
 
 
         // produce using the write to bdl function
-        ac97_write_to_bdl(dirty_state,(uint8_t*) sine_buf,nBytes,NULL,NULL);
-        return 0;
-   
-    
+        return ac97_write_to_output_bdl(dirty_state,(uint8_t*) sine_buf, nBytes, NULL, NULL);
 }
 
 static struct shell_cmd_impl write_to_bdl_impl = {
@@ -1282,6 +1402,8 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     tc_td.dma_control = 0;
     OUTB(tc_td.val, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL); */
 
+    // TODO: Handler needs to check input status register for interrupts, too
+
     /* Track Transfer Status register in a struct so we can handle the interrupt the device raised */
     uint16_t trans_status = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     transfer_status_t tr_stat = (transfer_status_t)trans_status;
@@ -1349,7 +1471,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     IRQ_HANDLER_END(); // Lets APIC know interrupt is over
 
     /* For debugging purposes, print out the BDL contents after our processing */
-    // print_bdl_out(state);
+    // print_bdl_out(state, 1);
 
     /* Resume device 
     DEBUG("Resuming device since the interrupt is handled...\n");
@@ -1492,8 +1614,6 @@ int ac97_pci_init(struct naut_info *naut)
                           bar & 0x1 ? "io port" : "memory", start, size);
                 }
 
-		
-
                 INFO("Adding ac97 device: bus=%u dev=%u func=%u: ioport_start_bar0=%p ioport_end_bar0=%p ioport_start_bar1=%p ioport_end_bar1=%p\n",
                       bus->num, pdev->num, 0,
                       state->ioport_start_bar0, state->ioport_end_bar0,
@@ -1574,7 +1694,6 @@ int ac97_pci_init(struct naut_info *naut)
                                                                     NK_SOUND_DEV_SAMPLE_RATE_32kHZ,
                                                                     NK_SOUND_DEV_SAMPLE_RATE_44kHZ1,
                                                                     NK_SOUND_DEV_SAMPLE_RATE_48kHZ};
-
                     for (int i=0; i<7; i++)
                     {
                         struct ac97_sample_rate *rate = (struct ac97_sample_rate *)malloc(sizeof(struct ac97_sample_rate));
@@ -1596,7 +1715,8 @@ int ac97_pci_init(struct naut_info *naut)
                     list_add(&rate->node, &state->sample_rates_list);
                 }
                 /*
-                // Print supported rates to the debug console
+                // TODO: Delete this
+                Print supported rates to the debug console
                 struct list_head *currate;
                 list_for_each(currate, &state->sample_rates_list) {
                     struct ac97_sample_rate *rate = list_entry(currate, struct ac97_sample_rate, node);
@@ -1618,11 +1738,8 @@ int ac97_pci_init(struct naut_info *naut)
                 uint16_t stat = pci_cfg_readw(bus->num, pdev->num, 0, 0x6);
                 DEBUG("PCI STATUS: 0x%04x\n", stat);
 
-                /* Create interrupt vector for AC97 */
-                // PCI Interrupt (A..D)
-                // state->pci_intr = cfg->dev_cfg.intr_pin;
-
-                // GRUESOME HACK
+                /* Create interrupt vector for AC97 using GRUESOME HACK */
+                // TODO: Can we remove any of these lines? 
                 /* Enable these wires to register possible interrupts */
                 nk_unmask_irq(8);
                 nk_unmask_irq(9);
@@ -1672,15 +1789,12 @@ int ac97_pci_init(struct naut_info *naut)
                 OUTW(master_vol.val, state->ioport_start_bar0 + AC97_NAM_MASTER_VOL);
                 OUTW(pcm_vol.val, state->ioport_start_bar0 + AC97_NAM_PCM_OUT_VOL);
 
-                /* TODO: Initialize separate in/out streams here */
-                state->stream = NULL;
-                state->INPUT_STREAM = NULL;
-
+                /* 
+                Initialize stream objects to NULL to indicate no stream has been opened of that type. 
+                */
+                state->output_stream = NULL;
+                state->input_stream = NULL;
                 /* TODO: Write default volume parameters to a stream so they can be configured? */
-
-
-                /* TODO: Should the BDLs be initialized here? */
-                /* TODO: Initialize a stream with some defualt parameters for playing sound. */
 
                 dirty_state = state; // TODO: Remove this code when we can get sound working in a non-dirty way
 
@@ -1690,14 +1804,9 @@ int ac97_pci_init(struct naut_info *naut)
                 //     continue;
                 // }
                 //DEBUG("AC97 device is now registered");
-
-
-                // // now bring up the device / interrupts
-
             }
         }
     }
-
     return 0;
 }
 
@@ -1897,84 +2006,6 @@ static struct shell_cmd_impl create_bdl_impl = {
 };
 nk_register_shell_cmd(create_bdl_impl);
 
-
-int ac97_init_output_bdl(struct ac97_state* state) {
-    /* Helper function to initialize and allocate the Buffer Descriptor List of an AC97 Device */
-    // NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
-
-    /* Allocate the BDL Description object for the PCM OUT box */
-    DEBUG("Allocating BDL description for PCM OUT box\n");
-    void* bdl_pointer = malloc(sizeof(struct ac97_bdl_desc));
-    if (!bdl_pointer) {
-        ERROR("Cannot allocate description for the BDL of the PCM OUT box\n");
-        return -1; 
-    }
-    BDL_OUT = (struct ac97_bdl_desc*) bdl_pointer; // the ac97_state expects a ac97_bdl_desc*
-
-    /* Now allocate the BDL Ring, a contiguous space of size BDL_MAX_SIZE*sizeof(ac97_bdl_entry) */
-    DEBUG("Allocating the BDL ring buffer for the PCM OUT box\n");
-    OUT_RING = malloc(BDL_MAX_SIZE*sizeof(ac97_bdl_entry)); // the ac97_state expects a void* (macros cast it as needed)
-    if (!OUT_RING) {
-        ERROR("Cannot allocate the BDL ring buffer of the PCM OUT box\n");
-        return -1;
-    }
-    memset(OUT_RING, 0, BDL_MAX_SIZE * sizeof(ac97_bdl_entry)); // initialize entries to 0s
-
-    /* Set other state variables to indicate empty BDL */
-    DEBUG("Describing an empty BDL in the PCM OUT box\n");
-    OUT_HEAD = 0;
-    OUT_TAIL = 0;
-    OUT_SIZE = 0;
-
-    /*
-    Set reset bit of output channel and wait for card to clear it
-    */
-    DEBUG("Setting reset bit of output box...\n");
-    uint8_t tc_int = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
-    transfer_control_t tc = (transfer_control_t)tc_int;
-    tc.reset = 1;
-    OUTB(tc.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
-
-    // Wait for device to clear the reset bit
-    while (true)
-    {
-        uint8_t tc_int = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
-        transfer_control_t tc = (transfer_control_t)tc_int;
-        if (tc.reset == 0)
-            break;
-        else
-            nk_sleep(100000000); // 100 ms
-    }
-    DEBUG("Device has cleared the reset bit...\n");
-
-    /*
-    Write physical position of BDL to output NABM register
-    */
-    // Write phyiscal position of BDL to the output box
-    DEBUG("Telling device that the BDL is located at %x...\n", OUT_RING);
-    OUTL((uint32_t)OUT_RING, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
-
-    return 0; // indicate success
-}
-
-int ac97_deinit_output_bdl(struct ac97_state* state) {
-    /* Helper function to deallocate and remove the Buffer Descripor List of an AC97 Device */
-    // NOTE: the inputted ac97_state* must be named 'state' for macros to work properly
-    DEBUG("Deallocating the BDL ring buffer for the PCM OUT box\n");
-
-    /* We're assuming the caller is responsible for freeing their data
-    for (int i=0; i < BDL_MAX_SIZE; i++) // Free all buffer entries pointed to by the BDL 
-        {free((void*) OUT_ENTRY_ADDR(i));}
-    */
-    
-    free(OUT_RING); // Then free the pointer to the base address of the BDL
-
-    DEBUG("Deallocating the BDL description for the PCM OUT box\n");
-    free((void*) BDL_OUT); // Then free the BDL description object
-
-    return 0; // indicate success
-}
-
 // TODO: Undirty this function by removing its use of the dirty_state static struct
 static int handle_add_sound_buffers(char *buf, void *priv)
 {
@@ -2021,7 +2052,7 @@ static int handle_consume_sound_buffers(char *buf, void *priv)
     Activates the DMA of the AC97 so it can start playing sound data
     */
     // print the BDL before we consume it
-    print_bdl_out(dirty_state);
+    print_bdl_out(dirty_state, 1);
 
     // grabbing struct, setting relevant field, rewriting
     uint8_t tc_int_td = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
@@ -2080,7 +2111,7 @@ int test_ac97_abs()
     }
 
     // Open stream
-    struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params); // just use first option in the list for testing
+    struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params[0]); // just use first option in the list for testing
     if (ac97_stream == -1){
         DEBUG("Could not open stream\n");
         return -1;
@@ -2096,7 +2127,7 @@ int test_ac97_abs()
     }
 
     DEBUG("Closing the stream...\n"); 
-    nk_sound_dev_close_stream(ac97_device, ac97_stream);
+    return nk_sound_dev_close_stream(ac97_device, ac97_stream);
 }
 
 static struct shell_cmd_impl test_ac97_abs_impl = {
