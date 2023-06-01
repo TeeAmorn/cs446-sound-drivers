@@ -30,7 +30,6 @@
 #include <dev/pci.h>
 #include <nautilus/mm.h> // malloc, free
 #include <dev/ac97_pci.h>
-#include <dev/e1000e_pci.h> // TODO: included so I can compile the file need to remove at a later date
 #include <nautilus/irq.h>         // interrupt register
 #include <nautilus/naut_string.h> // memset, memcpy
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
@@ -868,6 +867,22 @@ static int ac97_produce_in_buffer(struct ac97_state *state, void *buffer, uint16
     return 0;
 }
 
+static int ac97_add_zero_sound(struct ac97_state *state)
+{
+    // TODO: This function needs to support 20-bit sound also
+    // Create one huge sine buffer
+    uint64_t buf_len = 1 * 0x1000;                        // total number of samples
+    uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
+    if (!sine_buf)
+    {
+        ERROR("Could not allocate sound buffer!\n");
+        return 0;
+    }
+    create_sine_wave(sine_buf, buf_len, 0, 48000);
+
+    return ac97_produce_out_buffer(state, sine_buf, buf_len);
+}
+
 // TODO: handle the usage of callbacks. Right now implementation is non blocking
 static int ac97_write_to_output_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
                                     void (*callback)(nk_sound_dev_status_t status, void *context),
@@ -1244,7 +1259,7 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
     }
     else if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM)
     {
-        if (ac_state->output_stream == NULL)
+        if (ac_state->output_stream == NULL) // Will be NULL when set by ac97_pci_init or ac97_close_stream
         {
             ERROR("Attempting to play from an output stream, but one hasn't been opened!\n");
             return -1;
@@ -1254,6 +1269,12 @@ int ac97_play_stream(void *state, struct nk_sound_dev_stream *stream)
             // TODO: Is this a sufficient input check for equivalence in C?
             ERROR("Attempted to play from a second output stream, but the AC97 only supports one!\n");
             return -1;
+        }
+        // check if the BDL is empty. 
+        // if so, we can get the continuous-sound ball rolling by putting in some zeroed data to play
+        if (ac_state->bdl_out_desc->size == 0) {
+            DEBUG("Adding zero sound...\n");
+            ac97_add_zero_sound(ac_state);
         }
 
         // print the BDL before we consume it
@@ -1425,6 +1446,7 @@ int ac97_write_to_stream(void *state, struct nk_sound_dev_stream *stream, uint8_
             ERROR("Problem writing sound data to the output BDL stream!\n");
             return -1;
         }
+        return 0;
     }
     else 
     {
@@ -1497,7 +1519,7 @@ static int write_to_bdl_test(char *buf, void *priv)
 
 
         // produce using the write to bdl function
-        return ac97_write_to_output_bdl(dirty_state,(uint8_t*) sine_buf, nBytes, NULL, NULL);
+        return ac97_write_to_output_bdl(dirty_state, (uint8_t*) sine_buf, nBytes, NULL, NULL);
 }
 
 static struct shell_cmd_impl write_to_bdl_impl = {
@@ -1572,6 +1594,9 @@ int ac97_consume_out_buffer(struct ac97_state *state)
 
 static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
 {
+    /*
+    Interrupt handler for the AC97 device
+    */
     DEBUG("Interrupt handler caught %x\n", vector);
     struct ac97_state *state = (struct ac97_state*) priv_data;
 
@@ -1621,7 +1646,16 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     }
     else if (tr_stat_in.ioc_interrupt == 1) {
         DEBUG("Handling (input) ioc interrupt from a consumed buffer...\n");
-        ac97_consume_out_buffer(state);
+        //ac97_consume_in_buffer(state); // TODO: Write this function
+        ERROR("ac97_consume_in_buffer has not been written!\n");
+        return -1;
+
+        if (state->bdl_out_desc->size == 0) {
+            DEBUG("Adding zero sound...\n");
+            ac97_add_zero_sound(state);
+        }
+            
+
         // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
 
         /*
@@ -1655,7 +1689,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         to let other functions know that we should resume the stream. 
         */
         if (tr_stat_out.dma_status == 0)
-                ERROR("Device is not halted, but we're handling the last buffer interrupt!\n");
+            ERROR("Device is not halted, but we're handling the last buffer interrupt!\n");
 
         // ac97_deinit_output_bdl(state);
         // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
@@ -2340,7 +2374,6 @@ int ac97_pci_deinit()
     return 0;
 }
 
-
 int test_ac97_abs()
 {
     DEBUG("\n\n\nTESTING AC97 DEVICE THROUGH ABSTRACTION LAYER\n\n\n");
@@ -2385,14 +2418,14 @@ int test_ac97_abs()
         
         /* Attempt to play sound */
         // Create one huge sine buffer
-        uint64_t buf_len = 10 * 0x1000;                       // total number of samples
+        uint64_t buf_len = 1 * 0x1000;                       // total number of samples
         uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
         if (!sine_buf)
         {
             nk_vc_printf("Could not sound buffer!\n");
             return 0;
         }
-        create_sine_wave(sine_buf, buf_len, 261, 48000); // TODO: does this match sampling freq from device state?
+        create_sine_wave(sine_buf, buf_len, 0, 48000); // TODO: does this match sampling freq from device state?
         DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)sine_buf);
 
         // TODO: How do we test if this works for sound buffers that are too large to fit in the BDL? 
@@ -2510,3 +2543,110 @@ static struct shell_cmd_impl test_ac97_abs_in_impl = {
 };
 nk_register_shell_cmd(test_ac97_abs_in_impl);
 
+
+int start_continuous_sound()
+{
+    /*
+    Queries the device for available modes, picks an output mode to open an output stream, then plays the stream. 
+    No sound data is written to the output stream by this function. This function is exposed to the NK shell for sound testing. 
+    */
+    DEBUG("\n\n\nSTARTING A STREAM FOR CONTINUOUS OUTPUT SOUND\n\n\n");
+
+    // Locate the ac97 device 
+    struct nk_sound_dev *ac97_device = nk_sound_dev_find("ac97-0");
+    if (ac97_device == 0)
+    {
+        ERROR("Could not locate an AC97 device!\n");
+        return -1;
+    }
+    DEBUG("Found Device: %s\n", ac97_device->dev.name);
+
+    // Ask device for possible stream params. Print them to the screen so we can hard-code a choice of params that represents
+    // an output stream for the next step. 
+    struct nk_sound_dev_params params[2];
+    uint32_t params_size = 2;
+    int num_entries = nk_sound_dev_get_available_modes(ac97_device, params, params_size);
+    if (num_entries == 0)
+    {
+        ERROR("Device has no available stream modes!\n");
+        return -1;
+    }
+    for (int i = 0; i < params_size; i++)
+    {
+        DEBUG("AC97 stream params\ntype: %d\nnum_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
+              params[i].type, params[i].num_of_channels, params[i].sample_rate, params[i].sample_resolution);
+    }
+
+    // Open an output stream.
+    struct nk_sound_dev_params *output_params = &params[0];
+    struct nk_sound_dev_stream *ac97_stream = nk_sound_dev_open_stream(ac97_device, output_params);
+    if (ac97_stream == -1)
+    {
+        ERROR("Could not open the output stream!\n");
+        return -1;
+    }
+    else
+    {
+        // For debugging purposes, quickly use the state object to view the parameters that were set.
+        struct ac97_state *state = (struct ac97_state *)ac97_device->dev.state;
+        uint16_t gcr_port = state->ioport_start_bar1 + AC97_NABM_CTRL;
+        global_control_register_t global_control_register;
+        global_control_register.val = INL(gcr_port);
+        uint16_t DAC_port = state->ioport_start_bar0 + AC97_NAM_DAC_RATE;
+        uint16_t sample_rate = INW(DAC_port);
+        DEBUG("Opened stream with the following parameters:\nnum_of_channels: %d\nsample_rate: %d\nsample_resolution: %d\n",
+              (global_control_register.chnl + 1) * 2, sample_rate, global_control_register.out_mode ? 20 : 16);
+    }
+
+    // Activate the DMA of the device to start playing from the empty stream
+    nk_sound_dev_play_stream(ac97_device, ac97_stream);
+    nk_vc_printf("Output stream is open and playing...\n");
+    return 0; // Indicate success
+}
+static struct shell_cmd_impl open_stream_out_impl = {
+    .cmd = "open_stream_out",
+    .help_str = "open_stream_out",
+    .handler = start_continuous_sound,
+};
+nk_register_shell_cmd(open_stream_out_impl);
+
+
+int write_data_out()
+{
+    /*
+    Creates a sine wave buffer to be played, then writes it to the output stream of the AC97 device. 
+    This function is exposed to the NK shell for sound testing.
+    */
+    DEBUG("\n\nWRITING SOUND DATA\n\n");
+    // Find ac97 device
+    struct nk_sound_dev *ac97_device = nk_sound_dev_find("ac97-0");
+    if (ac97_device == 0)
+    {
+        DEBUG("No device found\n");
+        return -1;
+    }
+    DEBUG("Found Device: %s\n", ac97_device->dev.name);
+
+    // Locate the output stream of the device
+    struct nk_sound_dev_stream *stream = ((struct ac97_state*) ac97_device->dev.state)->output_stream;
+
+    // Create one huge sine buffer
+    uint64_t buf_len = 2 * BDL_ENTRY_MAX_SIZE;            // total number of samples (write two buffers' worth)
+    uint16_t *sine_buf = (uint16_t*) malloc(2 * buf_len); // each sample is 2 bytes
+    if (!sine_buf)
+    {
+        nk_vc_printf("Could not sound buffer!\n");
+        return 0;
+    }
+    create_sine_wave(sine_buf, buf_len, 261, 48000); // TODO: does this match sampling freq from device state?
+    DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)sine_buf);
+
+    // Write the sound data to the stream
+    return nk_sound_dev_write_to_stream(ac97_device, stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
+}
+static struct shell_cmd_impl write_data_out_impl = {
+    .cmd = "write_data_out",
+    .help_str = "write_data_out",
+    .handler = write_data_out,
+};
+nk_register_shell_cmd(write_data_out_impl);
