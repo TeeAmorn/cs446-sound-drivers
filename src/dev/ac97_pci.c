@@ -871,7 +871,7 @@ static int ac97_add_zero_sound(struct ac97_state *state)
 {
     // TODO: This function needs to support 20-bit sound also
     // Create one huge sine buffer
-    uint64_t buf_len = 1 * 0x1000;                        // total number of samples
+    uint64_t buf_len = 1 * 0x800;                        // total number of samples
     uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
     if (!sine_buf)
     {
