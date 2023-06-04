@@ -1592,6 +1592,68 @@ int ac97_consume_out_buffer(struct ac97_state *state)
     return 0;
 }
 
+int ac97_consume_in_buffer(struct ac97_state *state)
+{
+    /* Frees the buffer most recently consumed by the AC97 device.
+
+       NOTE: The inputted ac97_state must be named 'state' for macros to work properly
+    */
+
+    /* Our code maintains the buffer size; we can't consume if there are no entries */
+    if (IN_SIZE == 0)
+    {
+        ERROR("Attempted to consume a non-existent BDL entry!\n");
+        return -1;
+    }
+
+    /* Ask the device what the current processed entry is. Error if we are misaligned. */
+    // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
+    // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
+    DEBUG("Asking the device for the value of the APE...\n");
+    uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_APE);
+    if (((last_valid_entry_t)curr_entry).last_entry != BDL_INC(IN_HEAD, 1))
+    {
+        // The if check above is weird, but the last_valid_entry register has the same structure
+        // as the actual_processed_entry register, so I'm just taking advantage of the existing struct
+        ERROR("State variable is not consistent with device!\n");
+        return -1;
+    }
+
+    /* Ask the device how many samples it has transferred from the current processed entry.
+       Error if we are somehow consuming the buffer before all samples have been transferred.
+    */
+    /*
+    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
+          how many samples have been transferred from the APE, or if we're doing something incorrectly.
+
+    uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
+    if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
+    {
+        ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
+        return -1;
+    }
+    */
+
+    /* Free the contents of the consumed buffer, then reset the buffer entry */
+    // TODO: Perhaps the user space should be responsible for freeing the buffers
+    uint8_t free_pos = IN_HEAD;
+
+    DEBUG("Clearing the buffer at position %d of the PCM OUT BDL\n", free_pos);
+    // free((void*) OUT_ENTRY_ADDR(free_pos)); // TODO: Should the driver be responsible for freeing buffers, or should the application clean them up?
+    IN_ENTRY_ADDR(free_pos) = 0;
+    IN_ENTRY_SIZE(free_pos) = 0;
+    IN_ENTRY_LAST(free_pos) = 0;
+    IN_ENTRY_IOC(free_pos) = 0;
+
+    /*
+    Manage our BDL Ring's state variables
+    */
+    IN_HEAD = BDL_INC(free_pos, 1); // increment the head
+    IN_SIZE -= 1;                   // update effective size of BDL
+
+    return 0;
+}
+
 static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
 {
     /*
@@ -1646,7 +1708,7 @@ static int handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
     }
     else if (tr_stat_in.ioc_interrupt == 1) {
         DEBUG("Handling (input) ioc interrupt from a consumed buffer...\n");
-        //ac97_consume_in_buffer(state); // TODO: Write this function
+        ac97_consume_in_buffer(state);
         ERROR("ac97_consume_in_buffer has not been written!\n");
         return -1;
 
