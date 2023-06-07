@@ -69,6 +69,24 @@ typedef enum
     NK_SOUND_DEV_SAMPLE_RESOLUTION_32,
 } nk_sound_dev_sample_resolution_t;
 
+/* Indicates required alignment of buffer entry addresses so user program can pass valid addresses. 
+AC97 uses NK_SOUND_DEV_BUF_ALIGNMENT_2 (last bit is 0, i.e. addresses must simply be even). 
+HDA uses NK_SOUND_DEV_BUF_ALIGNMENT_128 (last 7 bits must be 0).
+
+We've left other alignments in case future sound devices implementing this interface require them. 
+*/
+typedef enum 
+{
+    NK_SOUND_DEV_BUF_ALIGNMENT_2,
+    NK_SOUND_DEV_BUF_ALIGNMENT_4,
+    NK_SOUND_DEV_BUF_ALIGNMENT_8,
+    NK_SOUND_DEV_BUF_ALIGNMENT_16,
+    NK_SOUND_DEV_BUF_ALIGNMENT_32,
+    NK_SOUND_DEV_BUF_ALIGNMENT_64,
+    NK_SOUND_DEV_BUF_ALIGNMENT_128,
+    NK_SOUND_DEV_BUF_ALIGNMENT_256,
+} nk_sound_dev_buf_alignment_t;
+
 // TODO: DATA FORMAT
 // Data Format
 // - Endianness
@@ -82,6 +100,7 @@ struct nk_sound_dev_params
     nk_sound_dev_sample_rate_t sample_rate;
     nk_sound_dev_sample_resolution_t sample_resolution;
     nk_sound_dev_scale_t scale;
+    nk_sound_dev_buf_alignment_t alignment; 
 };
 
 struct nk_sound_dev_stream

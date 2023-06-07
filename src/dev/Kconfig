@@ -203,6 +203,7 @@ config E1000E_PCI
 
 config AC97_PCI
     bool "AC97 PCI Driver"
+    depends on X86_64_HOST
     default n
     help
       Adds the ac97 sound driver
@@ -287,5 +288,3 @@ config DEBUG_VESA
        Add debugging output from VESA driver
 
 endmenu
-
-    
