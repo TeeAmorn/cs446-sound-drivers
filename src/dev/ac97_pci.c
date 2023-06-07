@@ -226,7 +226,7 @@ typedef union
 //record gain data structure (like master volume but for recording)
 typedef union
 {
-    uint16_t val;
+    uint32_t val;
     struct
     {
         uint8_t r_gain : 4;
@@ -1082,7 +1082,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         if (ac_state->input_stream != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
         {
             ERROR("Attempted to open a second input stream, but the AC97 only supports one!\n");
-            return -1;
+            return (struct nk_sound_dev_stream *)-1;
         }
 
         // allocate the stream on the heap, set defaults
@@ -1090,7 +1090,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         if (!ac_state->input_stream)
         {
             ERROR("Could not allocate input stream!\n");
-            return -1;
+            return (struct nk_sound_dev_stream *) -1;
         }
         ac_state->input_stream->stream_id = 0;         // input streams will have stream_id = 0
         ac_state->input_stream->params = *params;
@@ -1100,7 +1100,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         // init input bdl
         if (ac97_init_input_bdl(ac_state) == -1)
         {
-            return -1;
+            return (struct nk_sound_dev_stream *) -1;
         }
 
         return ac_state->input_stream;
@@ -1111,7 +1111,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         if (ac_state->output_stream != NULL) // initialized to NULL in ac97_pci_init or a call to ac97_close_stream
         {
             ERROR("Attempted to open a second output stream, but the AC97 only supports one!\n");
-            return -1;
+            return (struct nk_sound_dev_stream *) -1;
         }
 
         // allocate the stream on the heap, set defaults
@@ -1119,7 +1119,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         if (!ac_state->output_stream)
         {
             ERROR("Could not allocate output stream!\n");
-            return -1;
+            return (struct nk_sound_dev_stream *) -1;
         }
         ac_state->output_stream->stream_id = 1;    // output streams will have stream_id = 1
         ac_state->output_stream->params = *params; 
@@ -1129,7 +1129,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
         // init output bdl
         if (ac97_init_output_bdl(ac_state) == -1)
         {
-            return -1;
+            return (struct nk_sound_dev_stream *) -1;
         }
 
         return ac_state->output_stream;
@@ -1137,7 +1137,7 @@ struct nk_sound_dev_stream *ac97_open_stream(void *state, struct nk_sound_dev_pa
     else
     {
         ERROR("Inputted stream type is unrecognizable!\n");
-        return -1;
+        return (struct nk_sound_dev_stream *) -1;
     }
 }
 
@@ -2061,7 +2061,7 @@ int ac97_pci_init(struct naut_info *naut)
                 //setting recording gain to defaults
                 uint16_t mic_vol_int = INW(state->ioport_start_bar0 + AC97_NAM_MIC_VOL);
                 uint16_t mic_gain_int = INW(state->ioport_start_bar0 + AC97_NAM_MIC_GAIN);
-                uint16_t input_gain_int = INW(state->ioport_start_bar0 + AC97_NAM_IN_GAIN);
+                uint32_t input_gain_int = INW(state->ioport_start_bar0 + AC97_NAM_IN_GAIN);
 
                 mic_volume_t mic_vol = (mic_volume_t) mic_vol_int;
                 mic_record_gain_t mic_gain = (mic_record_gain_t) mic_gain_int;
@@ -2242,7 +2242,7 @@ int test_ac97_abs()
     }
     // Open stream
     struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params[0]); // just use first option in the list for testing
-    if (ac97_stream == -1){
+    if ((long) ac97_stream == -1){
         DEBUG("Could not open stream\n");
         return -1;
     }else{
@@ -2317,7 +2317,7 @@ int test_ac97_abs_in()
     //make stream input stream for testing purposes 
     params[0].type = NK_SOUND_DEV_INPUT_STREAM;
     struct nk_sound_dev_stream * ac97_stream = nk_sound_dev_open_stream(ac97_device, &params[0]); // just use first option in the list for testing
-    if (ac97_stream == -1){
+    if ((long) ac97_stream == -1){
         DEBUG("Could not open stream\n");
         return -1;
     }else{
@@ -2407,7 +2407,7 @@ int start_continuous_sound()
     // Open an output stream.
     struct nk_sound_dev_params *output_params = &params[0];
     struct nk_sound_dev_stream *ac97_stream = nk_sound_dev_open_stream(ac97_device, output_params);
-    if (ac97_stream == -1)
+    if ((long) ac97_stream == -1)
     {
         ERROR("Could not open the output stream!\n");
         return -1;
