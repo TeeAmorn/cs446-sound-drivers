@@ -1393,7 +1393,6 @@ static void probe_variable_sample_rates(struct ac97_state *state)
             if (!rate)
             {
                 ERROR("Could not allocate AC97 Sample Rate struct!\n");
-                return -1;
             }
             rate->rate = returned_rate;
             list_add(&rate->node, &state->sample_rates_list);
