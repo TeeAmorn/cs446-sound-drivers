@@ -38,6 +38,11 @@
 #include <math.h>
 #include <nautilus/shell.h>
 
+// When the user writes sound data to a stream, we must cast void* pointers to sound buffers to uint32_t addresses
+// that are accepted by the AC97. This was rasing a compiler warning that was fixed by casting the void* to a 
+// uintptr_t from the stdint library, then casting the uintptr_t to a uint32_t. 
+#include <stdint.h>               
+
 #ifndef NAUT_CONFIG_DEBUG_AC97_PCI
 #undef DEBUG_PRINT
 #define DEBUG_PRINT(fmt, args...)
@@ -525,7 +530,7 @@ static int ac97_init_output_bdl(struct ac97_state *state)
     */
     // Write phyiscal position of BDL to the output box
     DEBUG("Telling device that the BDL is located at %x...\n", OUT_RING);
-    OUTL((uint32_t)OUT_RING, state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
+    OUTL((uint32_t)((uintptr_t)OUT_RING), state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_ADDR);
 
     return 0; // indicate success
 }
@@ -608,7 +613,7 @@ static int ac97_init_input_bdl(struct ac97_state *state)
     */
     // Write phyiscal position of BDL to the input box
     DEBUG("Telling device that the BDL is located at %x...\n", IN_RING);
-    OUTL((uint32_t)IN_RING, state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_ADDR);
+    OUTL((uint32_t)((uintptr_t)IN_RING), state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_ADDR);
 
     return 0; // indicate success
 }
@@ -772,7 +777,7 @@ static int ac97_produce_out_buffer(struct ac97_state *state, void *buffer, uint1
     uint8_t write_pos = OUT_TAIL; // tail will always point to the next writeable position
 
     DEBUG("Updating the PCM OUT BDL entry at position 0x%x\n", write_pos);
-    OUT_ENTRY_ADDR(write_pos) = (uint32_t)buffer; // cast void* to a uint32_t (must be under 4GB memory)
+    OUT_ENTRY_ADDR(write_pos) = (uint32_t)((uintptr_t)buffer); // cast void* to a uint32_t (must be under 4GB memory)
     OUT_ENTRY_SIZE(write_pos) = num_samples;
     OUT_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
     OUT_ENTRY_IOC(write_pos) = 1;  // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
@@ -833,7 +838,7 @@ static int ac97_produce_in_buffer(struct ac97_state *state, void *buffer, uint16
     uint8_t write_pos = IN_TAIL; // tail will always point to the next writeable position
 
     DEBUG("Updating the PCM IN BDL entry at position 0x%x\n", write_pos);
-    IN_ENTRY_ADDR(write_pos) = (uint32_t)buffer; // cast void* to a uint32_t (must be under 4GB memory)
+    IN_ENTRY_ADDR(write_pos) = (uint32_t)((uintptr_t)buffer); // cast void* to a uint32_t (must be under 4GB memory)
     IN_ENTRY_SIZE(write_pos) = num_samples;
     IN_ENTRY_LAST(write_pos) = 1; // most recently written buffer is always last
     IN_ENTRY_IOC(write_pos) = 1;  // turn on ioc transfer interrupt so the handler can manage the buffer size when data is transferred
@@ -901,7 +906,7 @@ static int ac97_write_to_output_bdl(struct ac97_state *state, uint8_t *src, uint
     NOTE: For macros to work properly, the passed ac97_state* must be named 'state'
     */
     // Check the src pointer for correct alignment. The AC97 expects even addresses for sound data.
-    if (!src || (uint32_t)src & 1)
+    if (!src || (uint32_t)((uintptr_t)src) & 1)
     {
         ERROR("The pointer to sound data is illegal!\n");
         return -1;
@@ -950,7 +955,7 @@ static int ac97_write_to_input_bdl(struct ac97_state *state, uint8_t *src, uint6
     NOTE: For macros to work properly, the passed ac97_state* must be named 'state'
     */
     // Check the src pointer for correct alignment. The AC97 expects even addresses for sound data.
-    if (!src || (uint32_t)src & 1)
+    if (!src || (uint32_t)((uintptr_t)src) & 1)
     {
         ERROR("The pointer to sound data is illegal!\n");
         return -1;
@@ -1493,7 +1498,7 @@ static int write_to_bdl_test(char *buf, void *priv)
             return 0;
         }
         create_sine_wave(sine_buf, nBytes / 2, freq, 44100); // TODO: pull sampling freq from device state
-        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) sine_buf);
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
 
         // produce using the write to bdl function
@@ -2157,7 +2162,7 @@ static int handle_add_sound_buffers(char *buf, void *priv)
             return 0;
         }
         create_sine_wave(sine_buf, buf_len, freq, 44100); // TODO: pull sampling freq from device state
-        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) sine_buf);
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
         nk_sound_dev_write_to_stream(dirty_dev, dirty_state->output_stream, (uint8_t*)sine_buf, 2*buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
         return 0;
@@ -2262,7 +2267,7 @@ int test_ac97_abs()
             return 0;
         }
         create_sine_wave(sine_buf, buf_len, 0, 48000); // TODO: does this match sampling freq from device state?
-        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)sine_buf);
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
         nk_sound_dev_write_to_stream(ac97_device, ac97_stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
 
@@ -2338,7 +2343,7 @@ int test_ac97_abs_in()
         }
         memset(in_buf,0,2*buf_len);
 
-        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)in_buf);
+        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)((uintptr_t)in_buf));
 
         DEBUG("before read to stream\n");
         nk_sound_dev_read_to_stream(ac97_device, ac97_stream, (uint8_t *)in_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
@@ -2464,7 +2469,7 @@ int write_data_out()
         return 0;
     }
     create_sine_wave(sine_buf, buf_len, 261, 48000); // TODO: does this match sampling freq from device state?
-    DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t)sine_buf);
+    DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
     // Write the sound data to the stream
     return nk_sound_dev_write_to_stream(ac97_device, stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
