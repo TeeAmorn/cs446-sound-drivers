@@ -26,21 +26,18 @@
  */
 #include <nautilus/nautilus.h>
 #include <nautilus/sounddev.h>
-#include <nautilus/cpu.h>
 #include <dev/pci.h>
-#include <nautilus/mm.h>          // malloc, free
 #include <dev/ac97_pci.h>
 #include <nautilus/irq.h>         // interrupt register
-#include <nautilus/naut_string.h> // memset, memcpy
 #include <nautilus/dev.h>         // NK_DEV_REQ_*
 #include <nautilus/timer.h>       // nk_sleep(ns);
-#include <nautilus/cpu.h>         // udelay
 #include <math.h>
 #include <nautilus/shell.h>
 
-// When the user writes sound data to a stream, we must cast void* pointers to sound buffers to uint32_t addresses
-// that are accepted by the AC97. This was rasing a compiler warning that was fixed by casting the void* to a 
-// uintptr_t from the stdint library, then casting the uintptr_t to a uint32_t. 
+// When the user writes sound data to a stream, we must cast pointers to sound buffers (void*) 
+// to uint32_t addresses that are accepted by the AC97. We were encountering a compiler warning that 
+// was fixed by casting the void* to a uintptr_t from the stdint library, then casting the uintptr_t 
+// to a uint32_t. 
 #include <stdint.h>               
 
 #ifndef NAUT_CONFIG_DEBUG_AC97_PCI
@@ -314,9 +311,6 @@ typedef union
 static struct list_head dev_list;      // list of discovered devices
 static uint16_t* zero_sound_buf;       // TODO: how do we make this support 20-bit zero-sound as well? 
 static uint64_t zero_sound_buf_samples;
-
-static struct ac97_state *dirty_state; // TODO: clean this and its references from this file
-static struct nk_sound_dev *dirty_dev; // TODO: clean this and its references from this file
 
 struct ac97_state
 {
@@ -875,26 +869,14 @@ static int ac97_produce_in_buffer(struct ac97_state *state, void *buffer, uint16
 static int ac97_add_zero_sound(struct ac97_state *state)
 {
     // TODO: This function needs to support 20-bit sound also
-    // Create one huge sine buffer
-    /*
-    uint64_t buf_len = 1 * 0x400;                         // total number of samples
-    uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
-    if (!sine_buf)
-    {
-        ERROR("Could not allocate sound buffer!\n");
-        return 0;
-    }
-    create_sine_wave(sine_buf, buf_len, 0, 48000);
-    */
     DEBUG("\n\n Adding zero sound \n\n");
     DEBUG("Output stream size before addition: %d\n", state->bdl_out_desc->size);
     ac97_produce_out_buffer(state, zero_sound_buf, zero_sound_buf_samples);
     DEBUG("Output stream size after addition: %d\n", state->bdl_out_desc->size);
-
     return 0;
 }
 
-// TODO: handle the usage of callbacks. Right now implementation is non blocking
+// TODO: handle the usage of callbacks. 
 static int ac97_write_to_output_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
                                     void (*callback)(nk_sound_dev_status_t status, void *context),
                                     void *context)
@@ -943,7 +925,7 @@ static int ac97_write_to_output_bdl(struct ac97_state *state, uint8_t *src, uint
 }
 
 
-// TODO: handle the usage of callbacks. Right now implementation is non blocking
+// TODO: handle the usage of callbacks.
 static int ac97_write_to_input_bdl(struct ac97_state *state, uint8_t *src, uint64_t len,
                                     void (*callback)(nk_sound_dev_status_t status, void *context),
                                     void *context)
@@ -1481,37 +1463,6 @@ int ac97_read_to_stream(void *state, struct nk_sound_dev_stream *stream, uint8_t
     }
 }
 
-static int write_to_bdl_test(char *buf, void *priv)
-{
-    /* Adds nbuf full-length sine wave sound buffers playing sound at frequency freq */
-    uint64_t nBytes = 200000;
-    uint64_t freq = 261;
-
-    
-        DEBUG("Adding %d sound buffers playing a sine wave at frequency %d\n", nBytes, freq);
-
-        // Create one huge sine buffer
-        uint16_t *sine_buf = (uint16_t *) malloc(nBytes); // each sample is 2 bytes
-        if (!sine_buf) {
-            nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
-            return 0;
-        }
-        create_sine_wave(sine_buf, nBytes / 2, freq, 44100); // TODO: pull sampling freq from device state
-        DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
-
-
-        // produce using the write to bdl function
-        return ac97_write_to_output_bdl(dirty_state, (uint8_t*) sine_buf, nBytes, NULL, NULL);
-}
-
-static struct shell_cmd_impl write_to_bdl_impl = {
-    .cmd = "write_to_bdl",
-    .help_str = "write_to_bdl",
-    .handler = write_to_bdl_test,
-};
-nk_register_shell_cmd(write_to_bdl_impl);
-
-
 int ac97_consume_out_buffer(struct ac97_state *state)
 {
     /* Frees the buffer most recently consumed by the AC97 device.
@@ -1538,21 +1489,6 @@ int ac97_consume_out_buffer(struct ac97_state *state)
         ERROR("State variable is not consistent with device!\n");
         // return -1;
     }
-
-    /* Ask the device how many samples it has transferred from the current processed entry.
-       Error if we are somehow consuming the buffer before all samples have been transferred.
-    */
-    /*
-    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
-          how many samples have been transferred from the APE, or if we're doing something incorrectly.
-
-    uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
-    if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
-    {
-        ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
-        return -1;
-    }
-    */
 
     /* Reset the buffer entry (the user is responsible for freeing the data in the entry) */
     uint8_t free_pos = OUT_HEAD;
@@ -1598,21 +1534,6 @@ int ac97_consume_in_buffer(struct ac97_state *state)
         ERROR("State variable is not consistent with device!\n");
         return -1;
     }
-
-    /* Ask the device how many samples it has transferred from the current processed entry.
-       Error if we are somehow consuming the buffer before all samples have been transferred.
-    */
-    /*
-    TODO: This code always seems to raise an error. I wonder if the QEMU emulation doesn't properly update
-          how many samples have been transferred from the APE, or if we're doing something incorrectly.
-
-    uint16_t trans_samples = INW(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_TRANS);
-    if (trans_samples != OUT_ENTRY_SIZE(OUT_HEAD))
-    {
-        ERROR("Attempting to consume a buffer that the device has not finished consuming!\n");
-        return -1;
-    }
-    */
 
     /* Reset the buffer entry. The user is responsible for freeing the data in the buffer. */
     uint8_t free_pos = IN_HEAD;
@@ -1709,36 +1630,15 @@ static int int_handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         ac97_consume_out_buffer(state);
         ac97_add_zero_sound(state); // play continuous sound by playing from this zero_sound buffer until more data is written
         */
-        
-
-        // ac97_deinit_output_bdl(state);
-        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else if (tr_stat_out.ioc_interrupt == 1) {
         output_interrupt = 1;
         DEBUG("Handling (output) ioc interrupt from a consumed buffer...\n");
         ac97_consume_out_buffer(state);
-        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
-
-        /*
-        Test that the device properly manages the ring buffer state variables by playing
-        continuous sound
-        */
-       /*  uint64_t buf_len = 0x1000;
-        uint16_t *sine_buf = (uint16_t *) malloc(2 * buf_len); // each sample is 2 bytes
-        if (!sine_buf)
-        {
-            nk_vc_printf("ERROR: Could not allocate half-length sound buffer\n");
-            return 0;
-        }
-        uint64_t tone_freq = (OUT_HEAD * (500 - 200) / (BDL_MAX_SIZE - 1)) + 200; // stepped frequency between 200 and 500
-        create_sine_wave(sine_buf, buf_len, tone_freq, 44100); // TODO: pull sampling freq from device state
-        ac97_produce_out_buffer(state, sine_buf, 0x1000); */
     }
     else if (tr_stat_out.fifo_interrupt == 1) {
         output_interrupt = 1;
         DEBUG("Handling (output) fifo error interrupt...\n");
-        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else {
         ERROR("Transfer status registers do not indicate a known interrupt\n");
@@ -2008,7 +1908,7 @@ int ac97_pci_init(struct naut_info *naut)
                 DEBUG("PCI STATUS: 0x%04x\n", stat);
 
                 /* Create interrupt vector for AC97 using GRUESOME HACK */
-                // TODO: Can we remove any of these lines? 
+                // TODO: Can we remove any of these lines, or do we need to unmask all IRQs?
                 /* Enable these wires to register possible interrupts */
                 nk_unmask_irq(8);
                 nk_unmask_irq(9);
@@ -2097,8 +1997,6 @@ int ac97_pci_init(struct naut_info *naut)
                 state->output_stream = NULL;
                 state->input_stream = NULL;
 
-                dirty_state = state; // TODO: Remove this code when we can get sound working in a non-dirty way
-
                 // if (!foundmem)
                 //
                 //     ERROR("init fn: ignoring device %s as it has no memory access method\n", state->name);
@@ -2124,28 +2022,24 @@ int ac97_pci_init(struct naut_info *naut)
     }
     create_sine_wave(zero_sound_buf, zero_sound_buf_samples, 0, 48000);
 
-    dirty_dev = nk_sound_dev_find("ac97-0"); // Initialize dirty_dev static struct for nk shell functions
     return 0;
 }
 
-// TODO: This should be done in a way such that the user doesn't have to call a command to callocate the BDL, 
-//       but is still automatic after boot. We can't allocate the BDL during boot, otherwise, we can't call 
-//       nk_sleep to make sure the device has cleared the reset bit on the NABM PCM OUT register box. 
-//       This function should also be made less dirty (don't use dirty_state)
-static int handle_create_bdl(char *buf, void *priv)
-{
-    return ac97_init_output_bdl(dirty_state);
-}
-static struct shell_cmd_impl create_bdl_impl = {
-    .cmd = "create_bdl",
-    .help_str = "create_bdl",
-    .handler = handle_create_bdl,
-};
-nk_register_shell_cmd(create_bdl_impl);
-
-// TODO: Undirty this function by removing its use of the dirty_state static struct
 static int handle_add_sound_buffers(char *buf, void *priv)
 {
+    /* First, locate the device */
+    struct nk_sound_dev *ac97_device = nk_sound_dev_find("ac97-0");
+    if (ac97_device == 0)
+    {
+        DEBUG("No device found\n");
+        return -1;
+    }
+    else
+    {
+        DEBUG("Found Device: %s\n", ac97_device->dev.name);
+    }
+    struct nk_sound_dev_stream *out_stream = ((struct ac97_state*) ac97_device->dev.state)->output_stream;
+
     /* Adds nbuf full-length sine wave sound buffers playing sound at frequency freq */
     uint8_t nbuf;
     uint64_t freq;
@@ -2160,10 +2054,10 @@ static int handle_add_sound_buffers(char *buf, void *priv)
             nk_vc_printf("ERROR: Could not allocate full-length sound buffer\n");
             return 0;
         }
-        create_sine_wave(sine_buf, buf_len, freq, 44100); // TODO: pull sampling freq from device state
+        create_sine_wave(sine_buf, buf_len, freq, 44100); // NOTE: could pull sampling freq from stream params instead of assuming
         DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
-        nk_sound_dev_write_to_stream(dirty_dev, dirty_state->output_stream, (uint8_t*)sine_buf, 2*buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
+        nk_sound_dev_write_to_stream(ac97_device, out_stream, (uint8_t*)sine_buf, 2*buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
         return 0;
     }
     nk_vc_printf("invalid add_sound_buffers command\n");
@@ -2177,35 +2071,6 @@ static struct shell_cmd_impl add_sound_buffers_impl = {
 };
 nk_register_shell_cmd(add_sound_buffers_impl);
 
-// TODO: Undirty this function by removing its use of the dirty_state static struct
-static int handle_consume_sound_buffers(char *buf, void *priv)
-{
-    /*
-    Activates the DMA of the AC97 so it can start playing sound data
-    */
-    // print the BDL before we consume it
-    print_bdl_out(dirty_state, 1);
-
-    // grabbing struct, setting relevant field, rewriting
-    uint8_t tc_int_td = INB(dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
-    transfer_control_t tc_td = (transfer_control_t) tc_int_td;
-    tc_td.dma_control = 1;
-    // Turn on all interrupts for now
-    tc_td.lbe_interrupt = 1;
-    tc_td.ioc_interrupt = 1;
-    tc_td.fifo_interrupt = 1;
-
-    DEBUG("Setting bit to transfer data...\n");
-    OUTB(tc_td.val, dirty_state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_CTRL);
-    return 0;
-}
-
-static struct shell_cmd_impl consume_sound_buffers_impl = {
-    .cmd = "consume_sound_buffers",
-    .help_str = "consume_sound_buffers",
-    .handler = handle_consume_sound_buffers,
-};
-nk_register_shell_cmd(consume_sound_buffers_impl);
 
 int ac97_pci_deinit()
 {
@@ -2258,14 +2123,14 @@ int test_ac97_abs()
         
         /* Attempt to play sound */
         // Create one huge sine buffer
-        uint64_t buf_len = 1 * 0x1000;                       // total number of samples
+        uint64_t buf_len = 7 * 0xFFFE;                        // total number of samples
         uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
         if (!sine_buf)
         {
             nk_vc_printf("Could not sound buffer!\n");
             return 0;
         }
-        create_sine_wave(sine_buf, buf_len, 0, 48000); // TODO: does this match sampling freq from device state?
+        create_sine_wave(sine_buf, buf_len, 0, 48000); // NOTE: we are assuming device sampling frequency is set to 480000
         DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
         nk_sound_dev_write_to_stream(ac97_device, ac97_stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
@@ -2378,9 +2243,7 @@ int start_continuous_sound()
     DEBUG("\n\n\nSTARTING A STREAM FOR CONTINUOUS OUTPUT SOUND\n\n\n");
 
     // Locate the ac97 device
-    // I have reason to believe overhead from device searching may be causing delays. In practice, the user already has their device pointer
-    // to pass around, so using the static dirty_dev struct is more realistic anyways
-    struct nk_sound_dev *ac97_device = dirty_dev; //nk_sound_dev_find("ac97-0");
+    struct nk_sound_dev *ac97_device = nk_sound_dev_find("ac97-0");
     if (ac97_device == 0)
     {
         ERROR("Could not locate an AC97 device!\n");
@@ -2445,10 +2308,9 @@ int write_data_out()
     This function is exposed to the NK shell for sound testing.
     */
     DEBUG("\n\nWRITING SOUND DATA\n\n");
+
     // Find ac97 device
-    // I have reason to believe overhead from device searching may be causing delays. In practice, the user already has their device pointer
-    // to pass around, so using the static dirty_dev struct is more realistic anyways
-    struct nk_sound_dev *ac97_device = dirty_dev; // nk_sound_dev_find("ac97-0"); 
+    struct nk_sound_dev *ac97_device = nk_sound_dev_find("ac97-0"); 
     if (ac97_device == 0)
     {
         DEBUG("No device found\n");
@@ -2467,7 +2329,7 @@ int write_data_out()
         nk_vc_printf("Could not allocate sound buffer!\n");
         return 0;
     }
-    create_sine_wave(sine_buf, buf_len, 261, 48000); // TODO: does this match sampling freq from device state?
+    create_sine_wave(sine_buf, buf_len, 261, 48000); // NOTE: we are assuming 48000 is sampling freq of this stream
     DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
     // Write the sound data to the stream

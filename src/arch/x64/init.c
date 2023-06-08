@@ -72,8 +72,6 @@
 #include <nautilus/cmdline.h>
 #include <test/test.h>
 
-char *script[] = {"open_stream_out", 0}; // TODO: remove this script eventually
-
 #ifdef NAUT_CONFIG_ASPACES
 #include <nautilus/aspace.h>
 #endif
@@ -120,8 +118,9 @@ char *script[] = {"open_stream_out", 0}; // TODO: remove this script eventually
 #ifdef NAUT_CONFIG_E1000E_PCI
 #include <dev/e1000e_pci.h>
 #endif
-// TODO: TEMP
+#ifdef NAUT_CONFIG_AC97_PCI
 #include <dev/ac97_pci.h>
+#endif
 #ifdef NAUT_CONFIG_RAMDISK
 #include <dev/ramdisk.h>
 #endif
@@ -529,9 +528,9 @@ init (unsigned long mbd,
     e1000_pci_init(naut);
 #endif
 
-//#ifdef NAUT_CONFIG_AC97_PCI
+#ifdef NAUT_CONFIG_AC97_PCI
     ac97_pci_init(naut);
-//#endif
+#endif
 
 #ifdef NAUT_CONFIG_E1000E_PCI
     e1000e_pci_init(naut);
@@ -583,7 +582,7 @@ init (unsigned long mbd,
     nk_watchdog_init(NAUT_CONFIG_WATCHDOG_DEFAULT_TIME_MS * 1000000UL);
 #endif
 
-    nk_launch_shell("root-shell",0,script,0); // replace 'script' with 0 eventually
+    nk_launch_shell("root-shell",0,0,0);
 
     runtime_init();
 
