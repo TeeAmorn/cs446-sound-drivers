@@ -262,20 +262,6 @@ typedef union
     } __attribute__((packed));
 } __attribute__((packed)) pcm_volume_t;
 
-// global status struct
-typedef union
-{
-    uint32_t val;
-    struct
-    {
-        uint32_t rsvd_1 : 20;
-        uint8_t channel : 2; // channel capabilities
-        uint8_t sample : 2;  // sample capabilities
-        uint8_t rsvd_2 : 8;
-
-    } __attribute__((packed));
-} __attribute__((packed)) global_status_t;
-
 // transfer control data structure
 typedef union
 {
@@ -309,7 +295,16 @@ typedef union
 // SECTION: USEFUL STRUCTS TO REPRESENT DEVICE COMPONENTS ============================================================================
 
 static struct list_head dev_list;      // list of discovered devices
-static uint16_t* zero_sound_buf;       // TODO: how do we make this support 20-bit zero-sound as well? 
+
+/* For continuous sound to be played, AC97 devices may point their BDLs towards this zero_sound_buf object until someone calls nk_sound_dev_write_to_stream(),
+   causing real sound data to be written and played instead. If this wasn't a static struct, each AC97 would need to initialize their own brand-new zero-sound
+   buffers every time ac97_add_zero_sound is called, and it would be a pain to free all of these. These static structs are initialized in ac97_pci_init(). 
+
+   NOTE: We seem to have continuous sound working without the use of the two static structs below (zero_sound_buf, and zero_sound_buf_samples).
+         However, we were not able to extensively test how sound is played in a real "listening-like" setting, e.g. playing Doom and having that
+         queue up sound effects. We are keeping the structs in case it might help future developers fix some buggy sound. 
+*/
+static uint16_t* zero_sound_buf;
 static uint64_t zero_sound_buf_samples;
 
 struct ac97_state
@@ -355,7 +350,7 @@ struct ac97_state
     uint8_t max_channels; 
     nk_sound_dev_scale_t allowed_scales;
 
-    // The AC97 can support up to 1 input stream. The user application must support mixing. 
+    // The AC97 can support up to 1 input stream. A future sounddev layer should support mixing. 
     struct nk_sound_dev_stream* output_stream; 
     struct nk_sound_dev_stream* input_stream; 
 };
@@ -1478,7 +1473,8 @@ int ac97_consume_out_buffer(struct ac97_state *state)
     }
 
     /* Ask the device what the current processed entry is. Error if we are misaligned. */
-    // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
+
+    // NOTE: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
     // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
     DEBUG("Asking the device for the value of the APE...\n");
     uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_APE);
@@ -1523,7 +1519,7 @@ int ac97_consume_in_buffer(struct ac97_state *state)
     }
 
     /* Ask the device what the current processed entry is. Error if we are misaligned. */
-    // TODO: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
+    // NOTE: Ideally, this error check could be removed altogether, but I'd rather keep it for safety
     // NOTE: The device increments the APE as it fires the interrupt that the previous APE was consumed
     DEBUG("Asking the device for the value of the APE...\n");
     uint8_t curr_entry = INB(state->ioport_start_bar1 + AC97_NABM_IN_BOX + AC97_REG_BOX_APE);
@@ -1597,9 +1593,6 @@ static int int_handler (excp_entry_t *excp, excp_vec_t vector, void *priv_data)
         */
         if (tr_stat_in.dma_status == 0)
             ERROR("Device is not halted, but we're handling the last buffer interrupt!\n");
-
-        // ac97_deinit_output_bdl(state);
-        // OUTB(0x1C, state->ioport_end_bar1 + AC97_NABM_OUT_BOX + AC97_REG_BOX_STATUS);
     }
     else if (tr_stat_in.ioc_interrupt == 1) {
         DEBUG("Handling (input) ioc interrupt from a consumed buffer...\n");
@@ -1931,10 +1924,10 @@ int ac97_pci_init(struct naut_info *naut)
                 state->sounddev = nk_sound_dev_register(state->name, 0, &ops, (void *)state);
                
                 if (!state->sounddev)
-                 {
-                     ERROR("init fn: Cannot register the ac97 device \"%s\"", state->name);
-                     return -1;
-                 }
+                {
+                    ERROR("init fn: Cannot register the ac97 device \"%s\"", state->name);
+                    return -1;
+                }
 
                 /*
                 Set master volume and PCM output volume to some defaults
@@ -2007,14 +2000,9 @@ int ac97_pci_init(struct naut_info *naut)
         }
     }
 
-    /* Initialize the static zero_sound_buf_samples and zero_sound_buf objects for all AC97 objects to use. For continuous sound to be 
-       played, AC97 devices can point their BDLs towards this zero_sound_buf object until someone calls nk_sound_dev_write_to_stream(),
-       causing real sound data to be written and played instead. If this wasn't a static struct, each AC97 would need to initialize their
-       own brand-new zero-sound buffers every time ac97_add_zero_sound is called, and it would be a pain to free all of these.
-    */
-    // TODO: This initialization needs to support 20-bit sound also
+    // TODO: This initialization needs to support 20-bit sound also, so it might need to be moved to ac97_open_stream()
     zero_sound_buf_samples = 1 * 0x800;                              // total number of samples
-    zero_sound_buf = (uint16_t *)malloc(2 * zero_sound_buf_samples); // TODO: each sample is 2 bytes for 16 bit, or 4 bytes for 20 bit
+    zero_sound_buf = (uint16_t *)malloc(2 * zero_sound_buf_samples); // NOTE: each sample is 2 bytes for 16 bit, or 4 bytes for 20 bit
     if (!zero_sound_buf)
     {
         ERROR("Could not allocate sound buffer!\n");
@@ -2074,8 +2062,12 @@ nk_register_shell_cmd(add_sound_buffers_impl);
 
 int ac97_pci_deinit()
 {
-    /* TODO: Call ac97_deinit_output_bdl */
+    /*
+    Deallocates all data maintained by our driver code
+    */
+    /* TODO: Call ac97_deinit_output_bdl, ac97_deinit_input_bdl */
     INFO("deinited and leaking\n");
+    // TODO: Call nk_sound_dev_unregister
     return 0;
 }
 
@@ -2127,10 +2119,10 @@ int test_ac97_abs()
         uint16_t *sine_buf = (uint16_t *)malloc(2 * buf_len); // each sample is 2 bytes
         if (!sine_buf)
         {
-            nk_vc_printf("Could not sound buffer!\n");
+            nk_vc_printf("Could not allocate sound buffer!\n");
             return 0;
         }
-        create_sine_wave(sine_buf, buf_len, 0, 48000); // NOTE: we are assuming device sampling frequency is set to 480000
+        create_sine_wave(sine_buf, buf_len, 400, 48000); // NOTE: we are assuming device sampling frequency is set to 480000
         DEBUG("Allocated a large sine buffer at address %x\n", (uint32_t) ((uintptr_t) sine_buf));
 
         nk_sound_dev_write_to_stream(ac97_device, ac97_stream, (uint8_t *)sine_buf, 2 * buf_len, NK_DEV_REQ_NONBLOCKING, NULL, NULL);
